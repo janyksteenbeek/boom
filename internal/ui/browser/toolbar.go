@@ -1,0 +1,110 @@
+package browser
+
+import (
+	"fmt"
+	"image/color"
+	"sync"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/widget"
+
+	"github.com/janyksteenbeek/boom/internal/event"
+	"github.com/janyksteenbeek/boom/internal/ui/components"
+	boomtheme "github.com/janyksteenbeek/boom/internal/ui/theme"
+)
+
+// BrowserToolbar is the toolbar above the track list with search, track count, and deck selector.
+type BrowserToolbar struct {
+	widget.BaseWidget
+
+	mu          sync.RWMutex
+	search      *widget.Entry
+	trackCount  *canvas.Text
+	deckSelect  *components.SegmentedControl
+	content     *fyne.Container
+}
+
+func NewBrowserToolbar(bus *event.Bus, onDeckChanged func(deck int)) *BrowserToolbar {
+	t := &BrowserToolbar{}
+
+	// Search field
+	t.search = widget.NewEntry()
+	t.search.SetPlaceHolder("Search library...")
+	t.search.OnChanged = func(query string) {
+		bus.PublishAsync(event.Event{
+			Topic: event.TopicLibrary, Action: event.ActionSearchQuery, Payload: query,
+		})
+	}
+
+	// Track count
+	t.trackCount = canvas.NewText("0 tracks", boomtheme.ColorLabelTertiary)
+	t.trackCount.TextSize = 11
+	t.trackCount.Alignment = fyne.TextAlignCenter
+
+	// Deck selector
+	t.deckSelect = components.NewSegmentedControl(
+		[]string{"Deck 1", "Deck 2"},
+		[]color.Color{boomtheme.ColorDeck1, boomtheme.ColorDeck2},
+		func(index int) {
+			if onDeckChanged != nil {
+				onDeckChanged(index + 1)
+			}
+		},
+	)
+
+	// Load to label
+	loadLabel := canvas.NewText("Load to:", boomtheme.ColorLabelTertiary)
+	loadLabel.TextSize = 11
+
+	// Background
+	bg := canvas.NewRectangle(boomtheme.ColorToolbarBg)
+	sep := canvas.NewRectangle(boomtheme.ColorSeparator)
+	sep.SetMinSize(fyne.NewSize(0, 0.5))
+
+	// Search wrapper with fixed width
+	searchWrap := container.New(layout.NewGridWrapLayout(fyne.NewSize(220, 28)), t.search)
+
+	row := container.NewHBox(
+		searchWrap,
+		layout.NewSpacer(),
+		t.trackCount,
+		layout.NewSpacer(),
+		loadLabel,
+		container.New(layout.NewGridWrapLayout(fyne.NewSize(4, 0))), // small gap
+		t.deckSelect,
+	)
+
+	padded := container.NewPadded(row)
+
+	t.content = container.NewStack(
+		bg,
+		container.NewBorder(nil, sep, nil, nil, padded),
+	)
+
+	t.ExtendBaseWidget(t)
+	return t
+}
+
+func (t *BrowserToolbar) UpdateTrackCount(count int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	label := fmt.Sprintf("%d tracks", count)
+	if count == 1 {
+		label = "1 track"
+	}
+	fyne.Do(func() {
+		t.trackCount.Text = label
+		t.trackCount.Refresh()
+	})
+}
+
+func (t *BrowserToolbar) MinSize() fyne.Size {
+	return fyne.NewSize(200, 40)
+}
+
+func (t *BrowserToolbar) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(t.content)
+}

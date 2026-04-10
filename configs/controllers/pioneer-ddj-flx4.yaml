@@ -1,0 +1,219 @@
+# Boom DJ — Pioneer DDJ-FLX4 MIDI Controller Mapping
+# Verified against DJay Pro 5.4.4 plist config
+# midiMessageType: 1=NoteOn/Off, 3=CC
+# midiChannel: 0-indexed (0=deck1, 1=deck2, 6=global)
+
+controller:
+  name: "Pioneer DDJ-FLX4"
+  vendor: "Pioneer DJ"
+  product_id: "DDJ-FLX4"
+  usb:
+    vendor_id: 0x2B73
+    product_id: 0x0035
+  deck_count: 2
+
+defaults:
+  button_debounce_ms: 30
+  soft_takeover_threshold: 0.05
+
+layers:
+  - name: base
+    id: 0
+  - name: shift
+    id: 1
+    activator:
+      type: note
+      channel: 0x00
+      number: 0x3F
+      mode: momentary
+    per_deck: true
+    per_deck_channels:
+      deck1: 0x00
+      deck2: 0x01
+
+deck_channels:
+  deck1:
+    note: 0x90   # NoteOn ch0
+    cc: 0xB0     # CC ch0
+  deck2:
+    note: 0x91   # NoteOn ch1
+    cc: 0xB1     # CC ch1
+
+decks:
+  # ─── TRANSPORT (DJay Pro verified) ─────────────────
+  transport:
+    - name: play_pause
+      type: button
+      midi: { status: note, number: 11 }    # ch0/1 Note 11
+      action: play_pause
+      led: { status: note, number: 11, on_value: 0x7F, off_value: 0x00 }
+
+    - name: cue
+      type: button
+      midi: { status: note, number: 12 }    # ch0/1 Note 12
+      action: cue
+      led: { status: note, number: 12, on_value: 0x7F, off_value: 0x00 }
+
+    - name: sync
+      type: button
+      midi: { status: note, number: 88 }    # ch0/1 Note 88 (0x58)
+      action: sync
+      led: { status: note, number: 88, on_value: 0x7F, off_value: 0x00 }
+
+  # ─── JOG WHEEL (DJay Pro verified) ─────────────────
+  jog:
+    - name: jog_touch
+      type: button
+      midi: { status: note, number: 54 }    # ch0/1 Note 54 = scratching mode
+      action: jog_touch
+
+    - name: jog_pitch_bend
+      type: encoder
+      midi: { status: cc, number: 33 }      # ch0/1 CC 33 = pitchBendMove
+      action: jog_pitch
+      encoder: { mode: relative_offset, sensitivity: 0.5 }
+
+    - name: jog_scratch
+      type: encoder
+      midi: { status: cc, number: 34 }      # ch0/1 CC 34 = scratchingMove
+      action: jog_scratch
+      encoder: { mode: relative_offset, sensitivity: 1.0 }
+
+    - name: jog_seek
+      type: encoder
+      midi: { status: cc, number: 41 }      # ch0/1 CC 41 = jogSeekMove
+      action: jog_pitch
+      encoder: { mode: relative_offset, sensitivity: 0.3 }
+
+  # ─── LOOPS (DJay Pro verified) ─────────────────────
+  loops:
+    - name: loop_in
+      type: button
+      midi: { status: note, number: 16 }    # ch0/1 Note 16
+      action: loop_in
+      led: { status: note, number: 16, on_value: 0x7F, off_value: 0x00 }
+
+    - name: loop_out
+      type: button
+      midi: { status: note, number: 17 }    # ch0/1 Note 17
+      action: loop_out
+      led: { status: note, number: 17, on_value: 0x7F, off_value: 0x00 }
+
+    - name: reloop
+      type: button
+      midi: { status: note, number: 77 }    # ch0/1 Note 77 = autoLoopOnOff
+      action: loop_toggle
+
+  # ─── PERFORMANCE PADS (ch7=deck1, ch9=deck2 per DJay) ──
+  # NOTE: Pads use different MIDI channels than the deck channels
+  # For now we map them on the deck channels; pad channel support comes later
+  pads:
+    - name: "pad_{{n}}"
+      type: button
+      count: 8
+      midi: { status: note, number_start: 0, number_step: 1 }
+      action: "hotcue_{{n}}"
+      led: { status: note, number_start: 0, number_step: 1, on_value: 0x7F, off_value: 0x00 }
+
+  # ─── FADERS & KNOBS (DJay Pro verified) ────────────
+  faders:
+    - name: volume
+      type: fader
+      midi: { status: cc, number: 19 }      # ch0/1 CC 19 = lineVolume
+      action: volume
+      soft_takeover: true
+
+    - name: tempo
+      type: fader
+      midi: { status: cc, number: 0 }       # ch0/1 CC 0 = speed
+      action: tempo
+      range: { min: 0, max: 127, inverted: true }
+      soft_takeover: true
+
+  eq:
+    - name: eq_high
+      type: knob
+      midi: { status: cc, number: 7 }       # ch0/1 CC 7 = highEQ
+      action: eq_high
+
+    - name: eq_mid
+      type: knob
+      midi: { status: cc, number: 11 }      # ch0/1 CC 11 = midEQ
+      action: eq_mid
+
+    - name: eq_low
+      type: knob
+      midi: { status: cc, number: 15 }      # ch0/1 CC 15 = lowEQ
+      action: eq_low
+
+    - name: gain
+      type: knob
+      midi: { status: cc, number: 4 }       # ch0/1 CC 4 = gain
+      action: gain
+
+  headphone:
+    - name: headphone_cue
+      type: button
+      midi: { status: note, number: 84 }    # ch0/1 Note 84 = toggleUnmixerEQMode
+      action: headphone_cue
+      led: { status: note, number: 84, on_value: 0x7F, off_value: 0x00 }
+
+# ─── GLOBAL CONTROLS (ch6 = MIDI channel 6) ──────────
+global:
+  channel:
+    note: 0x96   # NoteOn ch6
+    cc: 0xB6     # CC ch6
+
+  controls:
+    - name: crossfader
+      type: fader
+      midi: { status: cc, number: 31 }      # ch6 CC 31 = crossfade
+      action: crossfader
+
+    - name: browse_rotate
+      type: encoder
+      midi: { status: cc, number: 64 }      # ch6 CC 64 = libraryRotary
+      action: browse_scroll
+      encoder: { mode: relative_offset, sensitivity: 1.0 }
+
+    - name: browse_select
+      type: button
+      midi: { status: note, number: 65 }    # ch6 Note 65 = toggleLibrarySource
+      action: browse_select
+
+    - name: browse_back
+      type: button
+      midi: { status: note, number: 66 }    # ch6 Note 66 = libraryBack
+      action: browse_back
+
+    - name: load_track_1
+      type: button
+      midi: { status: note, number: 70 }    # ch6 Note 70 = loadTrack deck1
+      action: load_track_1
+
+    - name: load_track_2
+      type: button
+      midi: { status: note, number: 71 }    # ch6 Note 71 = loadTrack deck2
+      action: load_track_2
+
+    - name: master_level
+      type: knob
+      midi: { status: cc, number: 8 }       # ch6 CC 8 = master level (MSB)
+      action: master_volume
+      highres: { enabled: true, msb: 8, lsb: 40 }  # 14-bit pair: CC 8 (MSB) + CC 40 (LSB)
+
+    - name: cue_volume
+      type: knob
+      midi: { status: cc, number: 13 }      # ch6 CC 13 = cue/headphone volume (MSB)
+      action: cue_volume
+      highres: { enabled: true, msb: 13, lsb: 45 }  # 14-bit pair: CC 13 (MSB) + CC 45 (LSB)
+
+# ─── VU METER OUTPUT ──────────────────────────────────
+# Output CC 2 on ch0/ch1, value range 37-123
+led_output:
+  - name: vu_meter_deck1
+    per_deck: false
+    midi: { status: cc, number: 2 }
+    source: vu_level
+    mode: range
+    range: { min: 37, max: 123 }

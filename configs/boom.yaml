@@ -1,0 +1,14 @@
+# Boom DJ — Application Configuration
+# This file is auto-generated. Edit via Settings in the app.
+
+sample_rate: 48000
+buffer_size: 512
+num_decks: 2
+music_dirs:
+    - ~/Music
+database_path: /Users/janyksteenbeek/Library/Application Support/Boom/boom.db
+midi_mapping_dir: configs/controllers
+master_volume: 0.8
+headphone_volume: 0.8
+audio_output_device: Dell USB Audio
+cue_output_device: DDJ-FLX4

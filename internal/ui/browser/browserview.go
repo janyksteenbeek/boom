@@ -1,0 +1,90 @@
+package browser
+
+import (
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/widget"
+
+	"github.com/janyksteenbeek/boom/internal/event"
+	boomtheme "github.com/janyksteenbeek/boom/internal/ui/theme"
+	"github.com/janyksteenbeek/boom/pkg/model"
+)
+
+type BrowserView struct {
+	widget.BaseWidget
+
+	bus          *event.Bus
+	sidebar      *Sidebar
+	toolbar      *BrowserToolbar
+	columnHeader *ColumnHeader
+	trackList    *TrackList
+	content      *fyne.Container
+	targetDeck   int
+}
+
+func NewBrowserView(bus *event.Bus) *BrowserView {
+	b := &BrowserView{bus: bus, targetDeck: 1}
+
+	// Sidebar
+	b.sidebar = NewSidebar(func(categoryID string) {
+		bus.PublishAsync(event.Event{
+			Topic: event.TopicLibrary, Action: event.ActionFilterCategory, Payload: categoryID,
+		})
+	})
+
+	// Track list
+	b.trackList = NewTrackList(func(track model.Track) {
+		bus.Publish(event.Event{
+			Topic: event.TopicDeck, Action: event.ActionLoadTrack, DeckID: b.targetDeck, Payload: &track,
+		})
+	})
+
+	// Column header with sort
+	b.columnHeader = NewColumnHeader(defaultColumns, func(colID string, ascending bool) {
+		b.trackList.Sort(colID, ascending)
+		b.columnHeader.SetSort(colID, ascending)
+	})
+
+	// Toolbar
+	b.toolbar = NewBrowserToolbar(bus, func(deck int) {
+		b.targetDeck = deck
+	})
+
+	// Vertical separator between sidebar and content
+	sidebarSep := canvas.NewRectangle(boomtheme.ColorSeparator)
+	sidebarSep.SetMinSize(fyne.NewSize(0.5, 0))
+
+	// Right panel: toolbar + column header + track list
+	rightPanel := container.NewBorder(
+		container.NewVBox(b.toolbar, b.columnHeader),
+		nil, nil, nil,
+		b.trackList,
+	)
+
+	// Main layout: sidebar | separator | right panel
+	// Border layout uses sidebar's MinSize (180px) for the left width
+	b.content = container.NewBorder(
+		nil, nil,
+		container.NewBorder(nil, nil, nil, sidebarSep, b.sidebar),
+		nil,
+		rightPanel,
+	)
+
+	b.ExtendBaseWidget(b)
+	return b
+}
+
+func (b *BrowserView) SetTracks(tracks []model.Track) {
+	b.trackList.SetTracks(tracks)
+	b.toolbar.UpdateTrackCount(len(tracks))
+}
+
+// SetGenres updates the sidebar with available genres.
+func (b *BrowserView) SetGenres(genres []string) {
+	b.sidebar.SetGenres(genres)
+}
+
+func (b *BrowserView) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(b.content)
+}

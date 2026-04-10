@@ -1,0 +1,30 @@
+# Binaries
+build/
+/boom
+/midi-train
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go
+vendor/
+
+# Test
+*.test
+*.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# User config overrides
+configs/boom.local.yaml
