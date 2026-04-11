@@ -36,7 +36,8 @@ type Window struct {
 }
 
 func NewWindow(bus *event.Bus, cfg *config.Config) *Window {
-	a := app.NewWithID("com.boom.dj")
+	a := app.NewWithID("dev.janyk.boom")
+	a.SetIcon(fyne.NewStaticResource("app-icon.png", assets.AppIconPNG))
 	a.Settings().SetTheme(boomtheme.New())
 
 	w := a.NewWindow("Boom")

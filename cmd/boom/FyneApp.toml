@@ -1,0 +1,12 @@
+[Details]
+Icon = "Icon.png"
+Name = "Boom"
+ID = "dev.janyk.boom"
+Version = "0.1.0"
+Build = 2
+
+[LinuxAndBSD]
+GenericName = "DJ Application"
+Categories = ["Audio", "Music"]
+Comment = "Cross-platform DJ performance tool"
+Keywords = ["dj", "music", "audio", "mixer"]
