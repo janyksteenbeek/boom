@@ -213,13 +213,49 @@ func (r *waveformRenderer) Refresh() {
 				bw = 1
 			}
 
-			hLow := float32(pLow) * maxH
-			hMid := float32(pMid) * maxH
-			hHigh := float32(pHigh) * maxH
+			// Stacked bar heights (weighted proportions)
+			// Bass gets most visual space (DJ focus), highs get the edges
+			const wLow, wMid, wHigh float32 = 0.50, 0.30, 0.20
+			hLow := float32(pLow) * wLow * maxH
+			hMid := float32(pMid) * wMid * maxH
+			hHigh := float32(pHigh) * wHigh * maxH
+			totalH := hLow + hMid + hHigh
+			lowMidH := hLow + hMid
 
 			beforePlayhead := x < posX
 			cx := x + bw/2
 
+			// High (outermost, drawn behind): fills full stacked height
+			if idx < len(r.barsHigh) {
+				bar := r.barsHigh[idx]
+				bar.StrokeWidth = bw
+				bar.Position1 = fyne.NewPos(cx, centerY-totalH)
+				bar.Position2 = fyne.NewPos(cx, centerY+totalH)
+				if beforePlayhead {
+					bar.StrokeColor = boomtheme.ColorWaveformHighDim
+				} else {
+					bar.StrokeColor = boomtheme.ColorWaveformHigh
+				}
+				bar.Hidden = totalH < 0.3
+				bar.Refresh()
+			}
+
+			// Mid (middle layer): covers low+mid area
+			if idx < len(r.barsMid) {
+				bar := r.barsMid[idx]
+				bar.StrokeWidth = bw
+				bar.Position1 = fyne.NewPos(cx, centerY-lowMidH)
+				bar.Position2 = fyne.NewPos(cx, centerY+lowMidH)
+				if beforePlayhead {
+					bar.StrokeColor = boomtheme.ColorWaveformMidDim
+				} else {
+					bar.StrokeColor = boomtheme.ColorWaveformMid
+				}
+				bar.Hidden = lowMidH < 0.3
+				bar.Refresh()
+			}
+
+			// Low (innermost, drawn on top): bass core
 			if idx < len(r.barsLow) {
 				bar := r.barsLow[idx]
 				bar.StrokeWidth = bw
@@ -231,34 +267,6 @@ func (r *waveformRenderer) Refresh() {
 					bar.StrokeColor = boomtheme.ColorWaveformLow
 				}
 				bar.Hidden = hLow < 0.3
-				bar.Refresh()
-			}
-
-			if idx < len(r.barsMid) {
-				bar := r.barsMid[idx]
-				bar.StrokeWidth = bw
-				bar.Position1 = fyne.NewPos(cx, centerY-hMid)
-				bar.Position2 = fyne.NewPos(cx, centerY+hMid)
-				if beforePlayhead {
-					bar.StrokeColor = boomtheme.ColorWaveformMidDim
-				} else {
-					bar.StrokeColor = boomtheme.ColorWaveformMid
-				}
-				bar.Hidden = hMid < 0.3
-				bar.Refresh()
-			}
-
-			if idx < len(r.barsHigh) {
-				bar := r.barsHigh[idx]
-				bar.StrokeWidth = bw
-				bar.Position1 = fyne.NewPos(cx, centerY-hHigh)
-				bar.Position2 = fyne.NewPos(cx, centerY+hHigh)
-				if beforePlayhead {
-					bar.StrokeColor = boomtheme.ColorWaveformHighDim
-				} else {
-					bar.StrokeColor = boomtheme.ColorWaveformHigh
-				}
-				bar.Hidden = hHigh < 0.3
 				bar.Refresh()
 			}
 
@@ -306,14 +314,14 @@ func (r *waveformRenderer) Objects() []fyne.CanvasObject {
 		objs = append(objs, g)
 	}
 	objs = append(objs, r.empty)
-	// Layer order: low (back) → mid → high (front)
-	for _, b := range r.barsLow {
+	// Stacked layer order: high (back/outermost) → mid → low (front/innermost)
+	for _, b := range r.barsHigh {
 		objs = append(objs, b)
 	}
 	for _, b := range r.barsMid {
 		objs = append(objs, b)
 	}
-	for _, b := range r.barsHigh {
+	for _, b := range r.barsLow {
 		objs = append(objs, b)
 	}
 	objs = append(objs, r.head)

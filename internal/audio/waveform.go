@@ -8,7 +8,7 @@ import (
 	"github.com/gopxl/beep/v2"
 )
 
-const defaultPeakCount = 400
+const defaultPeakCount = 1200
 
 // WaveformData holds pre-computed peak data for waveform display.
 type WaveformData struct {
@@ -162,7 +162,7 @@ func normalizeAndProcess(peaks []float64) {
 
 	// Gamma correction — subtle boost for quiet parts, preserves dynamic range
 	for i := range peaks {
-		peaks[i] = math.Pow(peaks[i], 0.75)
+		peaks[i] = math.Pow(peaks[i], 0.80)
 	}
 
 	// Smoothing — 3-sample moving average

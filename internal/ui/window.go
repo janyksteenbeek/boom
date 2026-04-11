@@ -13,6 +13,7 @@ import (
 	"github.com/janyksteenbeek/boom/internal/config"
 	"github.com/janyksteenbeek/boom/internal/event"
 	"github.com/janyksteenbeek/boom/internal/ui/assets"
+	"github.com/janyksteenbeek/boom/internal/ui/beatgrid"
 	"github.com/janyksteenbeek/boom/internal/ui/browser"
 	"github.com/janyksteenbeek/boom/internal/ui/deck"
 	"github.com/janyksteenbeek/boom/internal/ui/mixer"
@@ -22,14 +23,15 @@ import (
 )
 
 type Window struct {
-	app     fyne.App
-	window  fyne.Window
-	bus     *event.Bus
-	cfg     *config.Config
-	deck1   *deck.DeckView
-	deck2   *deck.DeckView
-	mixer   *mixer.MixerView
-	browser *browser.BrowserView
+	app      fyne.App
+	window   fyne.Window
+	bus      *event.Bus
+	cfg      *config.Config
+	deck1    *deck.DeckView
+	deck2    *deck.DeckView
+	mixer    *mixer.MixerView
+	browser  *browser.BrowserView
+	beatGrid *beatgrid.BeatGridStrip
 	onSettingsSave func(*config.Config)
 }
 
@@ -45,10 +47,11 @@ func NewWindow(bus *event.Bus, cfg *config.Config) *Window {
 		window:  w,
 		bus:     bus,
 		cfg:     cfg,
-		deck1:   deck.NewDeckView(1, bus),
-		deck2:   deck.NewDeckView(2, bus),
-		mixer:   mixer.NewMixerView(bus),
-		browser: browser.NewBrowserView(bus),
+		deck1:    deck.NewDeckView(1, bus),
+		deck2:    deck.NewDeckView(2, bus),
+		mixer:    mixer.NewMixerView(bus),
+		browser:  browser.NewBrowserView(bus),
+		beatGrid: beatgrid.NewBeatGridStrip(bus),
 	}
 
 	// Logo
@@ -96,8 +99,11 @@ func NewWindow(bus *event.Bus, cfg *config.Config) *Window {
 	)
 	mainContent.SetOffset(0.55)
 
+	beatGridSep := canvas.NewRectangle(boomtheme.ColorSeparator)
+	beatGridSep.SetMinSize(fyne.NewSize(0, 1))
+
 	fullLayout := container.NewBorder(
-		container.NewVBox(toolbar, toolbarSep),
+		container.NewVBox(toolbar, toolbarSep, win.beatGrid, beatGridSep),
 		nil, nil, nil,
 		mainContent,
 	)
@@ -138,15 +144,22 @@ func (w *Window) subscribeEvents() {
 			if d != nil {
 				d.UpdatePosition(ev.Value)
 			}
+			w.beatGrid.UpdatePosition(ev.DeckID, ev.Value)
 		case event.ActionWaveformReady:
 			data, ok := ev.Payload.(*audio.WaveformData)
-			if ok && d != nil {
-				d.SetWaveformData(data)
+			if ok {
+				if d != nil {
+					d.SetWaveformData(data)
+				}
+				w.beatGrid.SetWaveformData(ev.DeckID, data)
 			}
 		case event.ActionTrackLoaded:
 			track, ok := ev.Payload.(*model.Track)
-			if ok && d != nil {
-				d.SetTrack(track)
+			if ok {
+				if d != nil {
+					d.SetTrack(track)
+				}
+				w.beatGrid.SetTrack(ev.DeckID, track)
 			}
 		case event.ActionPlayState:
 			if d != nil {
@@ -201,13 +214,16 @@ func (w *Window) subscribeEvents() {
 		return nil
 	})
 
-	// Analysis results: update deck BPM displays
+	// Analysis results: update deck BPM displays + beat grid
 	w.bus.Subscribe(event.TopicAnalysis, func(ev event.Event) error {
 		if ev.Action == event.ActionAnalyzeComplete {
 			result, ok := ev.Payload.(*event.AnalysisResult)
 			if ok {
 				w.deck1.UpdateAnalysis(result.TrackID, result.BPM, result.Key)
 				w.deck2.UpdateAnalysis(result.TrackID, result.BPM, result.Key)
+				if result.DeckID > 0 && len(result.BeatGrid) > 0 {
+					w.beatGrid.SetBeatGrid(result.DeckID, result.BeatGrid)
+				}
 			}
 		}
 		return nil

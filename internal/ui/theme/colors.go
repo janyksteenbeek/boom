@@ -50,14 +50,16 @@ var (
 	ColorWaveformGrid      = color.RGBA{R: 255, G: 255, B: 255, A: 12}  // Very subtle grid
 	ColorWaveformGridMajor = color.RGBA{R: 255, G: 255, B: 255, A: 22}  // Slightly brighter major grid
 	ColorPlayhead          = color.RGBA{R: 255, G: 255, B: 255, A: 220}
+	ColorBeatLine          = color.RGBA{R: 255, G: 255, B: 255, A: 100} // Beat marker
+	ColorBeatLineStrong    = color.RGBA{R: 255, G: 255, B: 255, A: 200} // Downbeat marker
 
 	// Waveform frequency band colors (Rekordbox-style)
 	ColorWaveformLow     = color.RGBA{R: 50, G: 130, B: 255, A: 255}  // Blue (bass)
-	ColorWaveformLowDim  = color.RGBA{R: 30, G: 80, B: 160, A: 100}
+	ColorWaveformLowDim  = color.RGBA{R: 30, G: 80, B: 160, A: 140}
 	ColorWaveformMid     = color.RGBA{R: 255, G: 170, B: 40, A: 255}  // Orange (mids)
-	ColorWaveformMidDim  = color.RGBA{R: 160, G: 100, B: 20, A: 100}
+	ColorWaveformMidDim  = color.RGBA{R: 160, G: 100, B: 20, A: 140}
 	ColorWaveformHigh    = color.RGBA{R: 230, G: 230, B: 240, A: 255} // Off-white (highs)
-	ColorWaveformHighDim = color.RGBA{R: 140, G: 140, B: 150, A: 100}
+	ColorWaveformHighDim = color.RGBA{R: 140, G: 140, B: 150, A: 140}
 )
 
 // Browser — Apple HIG layered surfaces for the library browser.

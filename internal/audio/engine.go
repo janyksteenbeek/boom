@@ -14,7 +14,7 @@ import (
 
 const (
 	NumDecks               = 2
-	positionUpdateInterval = 33 * time.Millisecond
+	positionUpdateInterval = 16 * time.Millisecond
 )
 
 type Engine struct {
