@@ -16,6 +16,8 @@ type Track struct {
 	Bitrate  int           `json:"bitrate" db:"bitrate"`
 	Format   string        `json:"format" db:"format"`
 	Size     int64         `json:"size" db:"size"`
-	Source   string        `json:"source" db:"source"`
-	AddedAt  time.Time     `json:"added_at" db:"added_at"`
+	Source     string        `json:"source" db:"source"`
+	AddedAt    time.Time     `json:"added_at" db:"added_at"`
+	AnalyzedAt time.Time    `json:"analyzed_at" db:"analyzed_at"`
+	BeatGrid   string       `json:"beat_grid" db:"beat_grid"`
 }

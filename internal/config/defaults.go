@@ -23,8 +23,11 @@ func DefaultConfig() *Config {
 		MIDIMappingDir:    "configs/controllers",
 		MasterVolume:      0.8,
 		HeadphoneVolume:   0.8,
-		AudioOutputDevice: "", // system default
-		CueOutputDevice:   "", // disabled
+		AudioOutputDevice:     "", // system default
+		CueOutputDevice:       "", // disabled
+		AutoAnalyzeOnDeckLoad: true,
+		AutoAnalyzeOnImport:   false,
+		BPMRange:              "normal",
 	}
 }
 

@@ -95,6 +95,8 @@ func (l *Library) subscribeEvents() {
 				tracks, err = l.store.AllTracks(0, 500)
 			case categoryID == "recent":
 				tracks, err = l.store.RecentTracks(100)
+			case categoryID == "unanalyzed":
+				tracks, err = l.store.UnanalyzedTracks(500)
 			case strings.HasPrefix(categoryID, "genre:"):
 				genre := strings.TrimPrefix(categoryID, "genre:")
 				tracks, err = l.store.TracksByGenre(genre, 500)

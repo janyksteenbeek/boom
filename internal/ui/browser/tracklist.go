@@ -225,6 +225,35 @@ func (t *TrackList) ScrollBy(delta int) {
 	})
 }
 
+// UnanalyzedTracks returns all visible tracks that have not been analyzed.
+func (t *TrackList) UnanalyzedTracks() []model.Track {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	var result []model.Track
+	for _, tr := range t.tracks {
+		if tr.BPM == 0 && tr.Key == "" {
+			result = append(result, tr)
+		}
+	}
+	return result
+}
+
+// UpdateTrackAnalysis updates BPM and Key for a specific track in-place.
+func (t *TrackList) UpdateTrackAnalysis(trackID string, bpm float64, key string) {
+	t.mu.Lock()
+	for i := range t.tracks {
+		if t.tracks[i].ID == trackID {
+			t.tracks[i].BPM = bpm
+			t.tracks[i].Key = key
+			break
+		}
+	}
+	t.mu.Unlock()
+	fyne.Do(func() {
+		t.list.Refresh()
+	})
+}
+
 // SelectedTrack returns the currently highlighted track, or nil if none.
 func (t *TrackList) SelectedTrack() *model.Track {
 	t.mu.RLock()

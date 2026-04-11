@@ -201,6 +201,18 @@ func (w *Window) subscribeEvents() {
 		return nil
 	})
 
+	// Analysis results: update deck BPM displays
+	w.bus.Subscribe(event.TopicAnalysis, func(ev event.Event) error {
+		if ev.Action == event.ActionAnalyzeComplete {
+			result, ok := ev.Payload.(*event.AnalysisResult)
+			if ok {
+				w.deck1.UpdateAnalysis(result.TrackID, result.BPM, result.Key)
+				w.deck2.UpdateAnalysis(result.TrackID, result.BPM, result.Key)
+			}
+		}
+		return nil
+	})
+
 	w.bus.Subscribe(event.TopicMixer, func(ev event.Event) error {
 		switch ev.Action {
 		case event.ActionCrossfader:

@@ -9,7 +9,8 @@ const (
 	TopicLibrary Topic = "library"
 	TopicMIDI    Topic = "midi"
 	TopicEngine  Topic = "engine"
-	TopicUI      Topic = "ui"
+	TopicUI       Topic = "ui"
+	TopicAnalysis Topic = "analysis"
 )
 
 // Deck actions.
@@ -73,6 +74,32 @@ const (
 	ActionFilterCategory = "filter_category"
 	ActionSortColumn     = "sort_column"
 )
+
+// Analysis actions.
+const (
+	ActionAnalyzeRequest   = "analyze_request"   // Payload: []model.Track
+	ActionAnalyzeProgress  = "analyze_progress"  // Payload: *AnalysisProgress
+	ActionAnalyzeComplete  = "analyze_complete"  // Payload: *AnalysisResult
+	ActionAnalyzeBatchDone = "analyze_batch_done" // No payload
+	ActionAnalyzeCancel    = "analyze_cancel"     // No payload
+	ActionKeyDetected      = "key_detected"       // Payload: key string via Value
+)
+
+// AnalysisProgress carries batch analysis progress information.
+type AnalysisProgress struct {
+	Current int
+	Total   int
+	TrackID string
+}
+
+// AnalysisResult carries completed analysis data for a single track.
+type AnalysisResult struct {
+	TrackID  string
+	BPM      float64
+	Key      string
+	BeatGrid []float64
+	DeckID   int // 0=batch, 1/2=deck
+}
 
 // Handler processes an event.
 type Handler func(Event) error

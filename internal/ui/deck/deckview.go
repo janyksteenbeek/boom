@@ -20,9 +20,10 @@ import (
 type DeckView struct {
 	widget.BaseWidget
 
-	deckID   int
-	bus      *event.Bus
-	waveform *WaveformWidget
+	deckID         int
+	bus            *event.Bus
+	currentTrackID string
+	waveform       *WaveformWidget
 
 	playBtn *components.DJButton
 	cueBtn  *components.DJButton
@@ -175,12 +176,14 @@ func (d *DeckView) SetWaveformData(data *audio.WaveformData) {
 
 func (d *DeckView) SetTrack(track *model.Track) {
 	if track == nil {
+		d.currentTrackID = ""
 		d.trackTitle.Text = "No Track Loaded"
 		d.trackArtist.Text = ""
 		d.bpmText.Text = "---"
 		d.timeText.Text = "0:00"
 		d.durText.Text = "/ 0:00"
 	} else {
+		d.currentTrackID = track.ID
 		d.trackTitle.Text = track.Title
 		if d.trackTitle.Text == "" {
 			d.trackTitle.Text = "Unknown"
@@ -200,6 +203,19 @@ func (d *DeckView) SetTrack(track *model.Track) {
 		d.bpmText.Refresh()
 		d.timeText.Refresh()
 		d.durText.Refresh()
+	})
+}
+
+// UpdateAnalysis updates the BPM display when analysis completes for the loaded track.
+func (d *DeckView) UpdateAnalysis(trackID string, bpm float64, key string) {
+	if d.currentTrackID != trackID {
+		return
+	}
+	fyne.Do(func() {
+		if bpm > 0 {
+			d.bpmText.Text = fmt.Sprintf("%.0f", bpm)
+			d.bpmText.Refresh()
+		}
 	})
 }
 

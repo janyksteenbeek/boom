@@ -54,9 +54,11 @@ func (s *Sidebar) buildStaticItems() {
 	s.content.Add(sectionHeader("LIBRARY"))
 	allItem := s.newItem("All Tracks", "all")
 	recentItem := s.newItem("Recently Added", "recent")
+	unanalyzedItem := s.newItem("Unanalyzed", "unanalyzed")
 	s.content.Add(allItem)
 	s.content.Add(recentItem)
-	s.items = []*SidebarItem{allItem, recentItem}
+	s.content.Add(unanalyzedItem)
+	s.items = []*SidebarItem{allItem, recentItem, unanalyzedItem}
 
 	// BPM Range section
 	s.content.Add(spacerRect(12))
@@ -98,9 +100,11 @@ func (s *Sidebar) SetGenres(genres []string) {
 	s.content.Add(sectionHeader("LIBRARY"))
 	allItem := s.newItem("All Tracks", "all")
 	recentItem := s.newItem("Recently Added", "recent")
+	unanalyzedItem := s.newItem("Unanalyzed", "unanalyzed")
 	s.content.Add(allItem)
 	s.content.Add(recentItem)
-	s.items = append(s.items, allItem, recentItem)
+	s.content.Add(unanalyzedItem)
+	s.items = append(s.items, allItem, recentItem, unanalyzedItem)
 
 	// Genre section
 	if len(genres) > 0 {

@@ -85,10 +85,34 @@ func ShowSettingsDialog(window fyne.Window, cfg *config.Config, onSave func(*con
 		),
 	)
 
+	// --- Analysis ---
+	autoAnalyzeOnLoad := widget.NewCheck("Analyze tracks when loaded to a deck", nil)
+	autoAnalyzeOnLoad.SetChecked(cfg.AutoAnalyzeOnDeckLoad)
+
+	autoAnalyzeOnImport := widget.NewCheck("Analyze tracks on library import", nil)
+	autoAnalyzeOnImport.SetChecked(cfg.AutoAnalyzeOnImport)
+
+	bpmRangeSelect := widget.NewSelect(config.BPMRangeLabels(), nil)
+	if cfg.BPMRange == "" {
+		bpmRangeSelect.SetSelected(config.BPMRangePresets[0].Label)
+	} else {
+		bpmRangeSelect.SetSelected(cfg.BPMRange)
+	}
+
+	analysisSection := container.NewVBox(
+		widget.NewLabel("Auto-analyze"),
+		autoAnalyzeOnLoad,
+		autoAnalyzeOnImport,
+		widget.NewSeparator(),
+		widget.NewLabel("BPM Range"),
+		bpmRangeSelect,
+	)
+
 	// --- Tabs ---
 	tabs := container.NewAppTabs(
 		container.NewTabItem("Library", container.NewVBox(musicSection, layout.NewSpacer())),
 		container.NewTabItem("Audio", container.NewVBox(audioSection, layout.NewSpacer())),
+		container.NewTabItem("Analysis", container.NewVBox(analysisSection, layout.NewSpacer())),
 		container.NewTabItem("Performance", container.NewVBox(perfSection, layout.NewSpacer())),
 	)
 	tabs.SetTabLocation(container.TabLocationTop)
@@ -132,6 +156,11 @@ func ShowSettingsDialog(window fyne.Window, cfg *config.Config, onSave func(*con
 		if bs, err := strconv.Atoi(bufferSizeSelect.Selected); err == nil {
 			cfg.BufferSize = bs
 		}
+
+		// Analysis
+		cfg.AutoAnalyzeOnDeckLoad = autoAnalyzeOnLoad.Checked
+		cfg.AutoAnalyzeOnImport = autoAnalyzeOnImport.Checked
+		cfg.BPMRange = bpmRangeSelect.Selected
 
 		// Save to disk
 		if err := cfg.Save(); err != nil {

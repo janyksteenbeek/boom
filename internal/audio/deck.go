@@ -225,6 +225,16 @@ func (d *Deck) Waveform() *WaveformData { return d.waveform.Load() }
 func (d *Deck) SampleRate() int          { return d.sampleRate }
 func (d *Deck) Tempo() float64           { return d.loadFloat(&d.tempoBits) }
 
+// PCMSamples returns a read-only reference to the decoded PCM buffer.
+// The returned slice must not be modified. Returns nil if no track is loaded.
+func (d *Deck) PCMSamples() [][2]float32 {
+	p := d.pcm.Load()
+	if p == nil {
+		return nil
+	}
+	return p.samples[:p.len]
+}
+
 // EffectiveBPM returns the track's BPM adjusted by the current tempo ratio.
 // Returns 0 if no track is loaded or the track has no BPM metadata.
 func (d *Deck) EffectiveBPM() float64 {

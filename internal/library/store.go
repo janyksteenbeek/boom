@@ -72,6 +72,11 @@ func (s *Store) migrate() error {
 	if err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
+
+	// v2: analysis columns (safe to re-run; duplicate column errors are ignored)
+	s.db.Exec(`ALTER TABLE tracks ADD COLUMN analyzed_at TEXT NOT NULL DEFAULT ''`)
+	s.db.Exec(`ALTER TABLE tracks ADD COLUMN beat_grid TEXT NOT NULL DEFAULT ''`)
+
 	return nil
 }
 
@@ -219,6 +224,36 @@ func (s *Store) TracksByBPMRange(low, high float64, limit int) ([]model.Track, e
 	`, low, high, limit)
 	if err != nil {
 		return nil, fmt.Errorf("tracks by bpm range: %w", err)
+	}
+	defer rows.Close()
+	return scanTracks(rows)
+}
+
+// UpdateAnalysis updates only the analysis fields for a track.
+func (s *Store) UpdateAnalysis(trackID string, bpm float64, key string, beatGrid string, analyzedAt time.Time) error {
+	_, err := s.db.Exec(`
+		UPDATE tracks SET bpm = ?, key = ?, beat_grid = ?, analyzed_at = ?
+		WHERE id = ?
+	`, bpm, key, beatGrid, analyzedAt.Format(time.RFC3339), trackID)
+	if err != nil {
+		return fmt.Errorf("update analysis: %w", err)
+	}
+	return nil
+}
+
+// UnanalyzedTracks returns tracks that have not been analyzed yet.
+func (s *Store) UnanalyzedTracks(limit int) ([]model.Track, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	rows, err := s.db.Query(`
+		SELECT id, path, title, artist, album, genre, bpm, key, duration, bitrate, format, size, source, added_at
+		FROM tracks WHERE analyzed_at = ''
+		ORDER BY title ASC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("unanalyzed tracks: %w", err)
 	}
 	defer rows.Close()
 	return scanTracks(rows)

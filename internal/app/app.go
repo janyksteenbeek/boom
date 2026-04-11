@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/janyksteenbeek/boom/internal/analysis"
 	"github.com/janyksteenbeek/boom/internal/audio"
 	"github.com/janyksteenbeek/boom/internal/config"
 	"github.com/janyksteenbeek/boom/internal/controller"
@@ -18,16 +19,18 @@ import (
 
 // App wires all subsystems together.
 type App struct {
-	bus     *event.Bus
-	cfg     *config.Config
-	engine  *audio.Engine
-	midi    *boomidi.Manager
-	library *library.Library
-	plugins *plugin.Registry
-	window  *ui.Window
-	loader  *controller.Loader
-	ledMgr  *controller.LEDManager
-	stopCh  chan struct{}
+	bus      *event.Bus
+	cfg      *config.Config
+	engine   *audio.Engine
+	midi     *boomidi.Manager
+	library  *library.Library
+	store    *library.Store
+	analyzer *analysis.Service
+	plugins  *plugin.Registry
+	window   *ui.Window
+	loader   *controller.Loader
+	ledMgr   *controller.LEDManager
+	stopCh   chan struct{}
 }
 
 func New() (*App, error) {
@@ -44,6 +47,9 @@ func New() (*App, error) {
 		return nil, err
 	}
 	lib := library.NewLibrary(bus, store)
+
+	// Analysis service
+	analyzer := analysis.NewService(bus, store, cfg)
 
 	engine, err := audio.NewEngine(bus, cfg.SampleRate, cfg.BufferSize, cfg.AudioOutputDevice)
 	if err != nil {
@@ -119,16 +125,18 @@ func New() (*App, error) {
 	})
 
 	app := &App{
-		bus:     bus,
-		cfg:     cfg,
-		engine:  engine,
-		midi:    midiMgr,
-		library: lib,
-		plugins: plugins,
-		window:  window,
-		loader:  loader,
-		ledMgr:  ledMgr,
-		stopCh:  make(chan struct{}),
+		bus:      bus,
+		cfg:      cfg,
+		engine:   engine,
+		midi:     midiMgr,
+		library:  lib,
+		store:    store,
+		analyzer: analyzer,
+		plugins:  plugins,
+		window:   window,
+		loader:   loader,
+		ledMgr:   ledMgr,
+		stopCh:   make(chan struct{}),
 	}
 
 	// Wire LED feedback: when play state changes, update controller LEDs
@@ -154,6 +162,18 @@ func New() (*App, error) {
 			genres, err := app.library.Genres()
 			if err == nil {
 				app.window.Browser().SetGenres(genres)
+			}
+
+			// Auto-analyze on import if enabled
+			if updatedCfg.AutoAnalyzeOnImport {
+				unanalyzed, err := app.store.UnanalyzedTracks(500)
+				if err == nil && len(unanalyzed) > 0 {
+					app.bus.PublishAsync(event.Event{
+						Topic:   event.TopicAnalysis,
+						Action:  event.ActionAnalyzeRequest,
+						Payload: unanalyzed,
+					})
+				}
 			}
 		}()
 	})
@@ -199,6 +219,7 @@ func (a *App) shutdown() {
 	if a.ledMgr != nil {
 		a.ledMgr.ClearAll()
 	}
+	a.analyzer.Stop()
 	a.engine.Stop()
 	a.midi.Stop()
 	a.loader.Close()

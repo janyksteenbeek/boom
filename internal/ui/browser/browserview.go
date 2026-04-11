@@ -51,6 +51,8 @@ func NewBrowserView(bus *event.Bus) *BrowserView {
 	// Toolbar
 	b.toolbar = NewBrowserToolbar(bus, func(deck int) {
 		b.targetDeck = deck
+	}, func() []model.Track {
+		return b.trackList.UnanalyzedTracks()
 	})
 
 	// Vertical separator between sidebar and content
@@ -79,6 +81,17 @@ func NewBrowserView(bus *event.Bus) *BrowserView {
 }
 
 func (b *BrowserView) subscribeEvents() {
+	// Analysis completion: update BPM/Key in track list live
+	b.bus.Subscribe(event.TopicAnalysis, func(ev event.Event) error {
+		if ev.Action == event.ActionAnalyzeComplete {
+			result, ok := ev.Payload.(*event.AnalysisResult)
+			if ok {
+				b.trackList.UpdateTrackAnalysis(result.TrackID, result.BPM, result.Key)
+			}
+		}
+		return nil
+	})
+
 	// MIDI browse scroll: move selection up/down in the track list
 	b.bus.Subscribe(event.TopicLibrary, func(ev event.Event) error {
 		switch ev.Action {

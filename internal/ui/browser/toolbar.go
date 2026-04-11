@@ -14,21 +14,27 @@ import (
 	"github.com/janyksteenbeek/boom/internal/event"
 	"github.com/janyksteenbeek/boom/internal/ui/components"
 	boomtheme "github.com/janyksteenbeek/boom/internal/ui/theme"
+	"github.com/janyksteenbeek/boom/pkg/model"
 )
 
 // BrowserToolbar is the toolbar above the track list with search, track count, and deck selector.
 type BrowserToolbar struct {
 	widget.BaseWidget
 
-	mu          sync.RWMutex
-	search      *widget.Entry
-	trackCount  *canvas.Text
-	deckSelect  *components.SegmentedControl
-	content     *fyne.Container
+	mu           sync.RWMutex
+	bus          *event.Bus
+	search       *widget.Entry
+	analyzeBtn   *widget.Button
+	progressText *canvas.Text
+	trackCount   *canvas.Text
+	deckSelect   *components.SegmentedControl
+	content      *fyne.Container
+	analyzing    bool
+	getUnanalyzed func() []model.Track
 }
 
-func NewBrowserToolbar(bus *event.Bus, onDeckChanged func(deck int)) *BrowserToolbar {
-	t := &BrowserToolbar{}
+func NewBrowserToolbar(bus *event.Bus, onDeckChanged func(deck int), getUnanalyzed func() []model.Track) *BrowserToolbar {
+	t := &BrowserToolbar{bus: bus, getUnanalyzed: getUnanalyzed}
 
 	// Search field
 	t.search = widget.NewEntry()
@@ -38,6 +44,36 @@ func NewBrowserToolbar(bus *event.Bus, onDeckChanged func(deck int)) *BrowserToo
 			Topic: event.TopicLibrary, Action: event.ActionSearchQuery, Payload: query,
 		})
 	}
+
+	// Analyze button
+	t.analyzeBtn = widget.NewButton("Analyze", func() {
+		t.mu.RLock()
+		isAnalyzing := t.analyzing
+		t.mu.RUnlock()
+
+		if isAnalyzing {
+			bus.PublishAsync(event.Event{
+				Topic: event.TopicAnalysis, Action: event.ActionAnalyzeCancel,
+			})
+			return
+		}
+
+		if t.getUnanalyzed != nil {
+			tracks := t.getUnanalyzed()
+			if len(tracks) > 0 {
+				bus.PublishAsync(event.Event{
+					Topic:   event.TopicAnalysis,
+					Action:  event.ActionAnalyzeRequest,
+					Payload: tracks,
+				})
+			}
+		}
+	})
+
+	// Progress text
+	t.progressText = canvas.NewText("", boomtheme.ColorLabelTertiary)
+	t.progressText.TextSize = 11
+	t.progressText.Alignment = fyne.TextAlignCenter
 
 	// Track count
 	t.trackCount = canvas.NewText("0 tracks", boomtheme.ColorLabelTertiary)
@@ -66,10 +102,13 @@ func NewBrowserToolbar(bus *event.Bus, onDeckChanged func(deck int)) *BrowserToo
 
 	// Search wrapper with fixed width
 	searchWrap := container.New(layout.NewGridWrapLayout(fyne.NewSize(220, 28)), t.search)
+	analyzeBtnWrap := container.New(layout.NewGridWrapLayout(fyne.NewSize(80, 28)), t.analyzeBtn)
 
 	row := container.NewHBox(
 		searchWrap,
+		analyzeBtnWrap,
 		layout.NewSpacer(),
+		t.progressText,
 		t.trackCount,
 		layout.NewSpacer(),
 		loadLabel,
@@ -84,8 +123,39 @@ func NewBrowserToolbar(bus *event.Bus, onDeckChanged func(deck int)) *BrowserToo
 		container.NewBorder(nil, sep, nil, nil, padded),
 	)
 
+	t.subscribeEvents()
 	t.ExtendBaseWidget(t)
 	return t
+}
+
+func (t *BrowserToolbar) subscribeEvents() {
+	t.bus.Subscribe(event.TopicAnalysis, func(ev event.Event) error {
+		switch ev.Action {
+		case event.ActionAnalyzeProgress:
+			p, ok := ev.Payload.(*event.AnalysisProgress)
+			if !ok {
+				return nil
+			}
+			t.mu.Lock()
+			t.analyzing = true
+			t.mu.Unlock()
+			fyne.Do(func() {
+				t.progressText.Text = fmt.Sprintf("Analyzing %d/%d...", p.Current, p.Total)
+				t.progressText.Refresh()
+				t.analyzeBtn.SetText("Cancel")
+			})
+		case event.ActionAnalyzeBatchDone:
+			t.mu.Lock()
+			t.analyzing = false
+			t.mu.Unlock()
+			fyne.Do(func() {
+				t.progressText.Text = ""
+				t.progressText.Refresh()
+				t.analyzeBtn.SetText("Analyze")
+			})
+		}
+		return nil
+	})
 }
 
 func (t *BrowserToolbar) UpdateTrackCount(count int) {
