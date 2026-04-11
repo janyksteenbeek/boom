@@ -3,11 +3,10 @@ package audio
 import (
 	"fmt"
 	"log"
-	"runtime/debug"
 	"time"
 	"unsafe"
 
-	"github.com/gen2brain/malgo"
+	"github.com/ebitengine/oto/v3"
 
 	"github.com/janyksteenbeek/boom/internal/event"
 	"github.com/janyksteenbeek/boom/pkg/model"
@@ -25,15 +24,46 @@ type Engine struct {
 	sampleRate int
 	stopCh     chan struct{}
 
-	malgoCtx *malgo.AllocatedContext
-	device   *malgo.Device
+	otoCtx *oto.Context
+	player *oto.Player
+}
+
+// audioReader implements io.Reader and feeds mixed audio to the oto player.
+// All processing is allocation-free: pre-decoded PCM, pre-allocated buffers.
+type audioReader struct {
+	engine *Engine
+	buf    [][2]float32
+}
+
+func (r *audioReader) Read(p []byte) (int, error) {
+	frames := len(p) / 8 // 8 bytes per stereo float32 frame
+	if frames == 0 {
+		return 0, nil
+	}
+	if frames > len(r.buf) {
+		frames = len(r.buf)
+	}
+
+	buf := r.buf[:frames]
+	for i := range buf {
+		buf[i] = [2]float32{}
+	}
+
+	r.engine.master.Stream(buf)
+
+	for i := range buf {
+		buf[i][0] = clampF32(buf[i][0])
+		buf[i][1] = clampF32(buf[i][1])
+	}
+
+	n := frames * 8
+	src := unsafe.Slice((*byte)(unsafe.Pointer(&buf[0])), n)
+	copy(p[:n], src)
+	return n, nil
 }
 
 func NewEngine(bus *event.Bus, sampleRate int, bufferSize int, outputDevice string) (*Engine, error) {
 	log.Printf("audio: initializing engine at %d Hz, buffer %d", sampleRate, bufferSize)
-
-	// Reduce GC frequency once at engine startup for lower audio jitter
-	debug.SetGCPercent(800)
 
 	e := &Engine{
 		bus:        bus,
@@ -48,72 +78,31 @@ func NewEngine(bus *event.Bus, sampleRate int, bufferSize int, outputDevice stri
 	}
 	e.master = NewMasterMixer(deckSlice, sampleRate)
 
-	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
+	// Initialize oto audio context
+	bufDuration := time.Duration(float64(bufferSize) / float64(sampleRate) * float64(time.Second))
+	otoCtx, ready, err := oto.NewContext(&oto.NewContextOptions{
+		SampleRate:   sampleRate,
+		ChannelCount: 2,
+		Format:       oto.FormatFloat32LE,
+		BufferSize:   bufDuration,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("malgo init context: %w", err)
+		return nil, fmt.Errorf("oto init: %w", err)
 	}
-	e.malgoCtx = ctx
+	<-ready
+	e.otoCtx = otoCtx
 
-	devices, _ := ctx.Devices(malgo.Playback)
-	for _, d := range devices {
-		marker := " "
-		if d.IsDefault != 0 {
-			marker = "*"
-		}
-		log.Printf("audio: [%s] %s", marker, d.Name())
+	reader := &audioReader{
+		engine: e,
+		buf:    make([][2]float32, 8192),
 	}
 
-	deviceConfig := malgo.DefaultDeviceConfig(malgo.Playback)
-	deviceConfig.Playback.Format = malgo.FormatF32
-	deviceConfig.Playback.Channels = 2
-	deviceConfig.SampleRate = uint32(sampleRate)
-	deviceConfig.PeriodSizeInFrames = uint32(bufferSize)
-	deviceConfig.Periods = 2
+	player := otoCtx.NewPlayer(reader)
+	player.SetBufferSize(bufferSize * 8) // bytes: frames × 2ch × 4 bytes
+	player.Play()
+	e.player = player
 
-	if outputDevice != "" && outputDevice != "System Default" {
-		for _, d := range devices {
-			if d.Name() == outputDevice {
-				log.Printf("audio: selecting output: %s", outputDevice)
-				deviceConfig.Playback.DeviceID = d.ID.Pointer()
-				break
-			}
-		}
-	}
-
-	onSamples := func(pOutputSamples, pInputSamples []byte, frameCount uint32) {
-		frames := int(frameCount)
-		if frames == 0 {
-			return
-		}
-
-		// Reinterpret malgo's byte buffer as [][2]float32 — same memory, zero copy.
-		// Safe on all target platforms (x86, x86_64, ARM64) which are little-endian
-		// and malgo's FormatF32 outputs native-endian float32.
-		stereo := unsafe.Slice((*[2]float32)(unsafe.Pointer(&pOutputSamples[0])), frames)
-		e.master.Stream(stereo)
-
-		// Clamp output to [-1.0, 1.0] to prevent DAC clipping distortion
-		for i := 0; i < frames; i++ {
-			stereo[i][0] = clampF32(stereo[i][0])
-			stereo[i][1] = clampF32(stereo[i][1])
-		}
-	}
-
-	device, err := malgo.InitDevice(ctx.Context, deviceConfig, malgo.DeviceCallbacks{Data: onSamples})
-	if err != nil {
-		ctx.Uninit()
-		ctx.Free()
-		return nil, fmt.Errorf("malgo init device: %w", err)
-	}
-	e.device = device
-
-	if err := device.Start(); err != nil {
-		device.Uninit()
-		ctx.Uninit()
-		ctx.Free()
-		return nil, fmt.Errorf("malgo start: %w", err)
-	}
-	log.Printf("audio: device started")
+	log.Printf("audio: device started (oto)")
 
 	e.subscribeEvents()
 	go e.positionUpdateLoop()
@@ -129,12 +118,9 @@ func (e *Engine) Deck(id int) *Deck {
 
 func (e *Engine) Stop() {
 	close(e.stopCh)
-	if e.device != nil {
-		e.device.Uninit()
-	}
-	if e.malgoCtx != nil {
-		_ = e.malgoCtx.Uninit()
-		e.malgoCtx.Free()
+	if e.player != nil {
+		e.player.Pause()
+		e.player.Close()
 	}
 }
 
@@ -174,7 +160,6 @@ func (e *Engine) subscribeEvents() {
 			deck.SetVolume(ev.Value)
 
 		case event.ActionGainChange:
-			// Map normalized 0.0-1.0 to gain multiplier 0.0-2.0 (0.5 = unity)
 			deck.SetGain(float32(ev.Value * 2.0))
 
 		case event.ActionEQHigh:
@@ -189,7 +174,6 @@ func (e *Engine) subscribeEvents() {
 			deck.SetTempo(ratio)
 
 		case event.ActionSync:
-			// Match this deck's tempo to the other deck's effective BPM
 			otherID := 2
 			if ev.DeckID == 2 {
 				otherID = 1
@@ -212,7 +196,6 @@ func (e *Engine) subscribeEvents() {
 			if !ok {
 				return fmt.Errorf("expected *model.Track")
 			}
-			// Decode on background goroutine to avoid blocking UI
 			deckID := ev.DeckID
 			go func() {
 				err := deck.LoadTrack(track)
@@ -269,6 +252,9 @@ func clampF32(v float32) float32 {
 	}
 	if v < -1.0 {
 		return -1.0
+	}
+	if v != v {
+		return 0
 	}
 	return v
 }

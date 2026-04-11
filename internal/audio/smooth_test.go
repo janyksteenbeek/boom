@@ -7,7 +7,8 @@ import (
 )
 
 func TestSmoothParam_Convergence(t *testing.T) {
-	sp := NewSmoothParam(0.0, 48000, 0.005)
+	var sp SmoothParam
+	sp.Init(0.0, 48000, 0.005)
 
 	sp.Set(1.0)
 
@@ -29,7 +30,8 @@ func TestSmoothParam_Convergence(t *testing.T) {
 }
 
 func TestSmoothParam_Snap(t *testing.T) {
-	sp := NewSmoothParam(0.0, 48000, 0.005)
+	var sp SmoothParam
+	sp.Init(0.0, 48000, 0.005)
 	sp.Set(0.75)
 	sp.Snap()
 
@@ -39,7 +41,8 @@ func TestSmoothParam_Snap(t *testing.T) {
 }
 
 func TestSmoothParam_ConcurrentSet(t *testing.T) {
-	sp := NewSmoothParam(0.0, 48000, 0.005)
+	var sp SmoothParam
+	sp.Init(0.0, 48000, 0.005)
 
 	var wg sync.WaitGroup
 	for g := 0; g < 10; g++ {

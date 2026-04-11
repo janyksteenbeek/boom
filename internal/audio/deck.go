@@ -3,7 +3,6 @@ package audio
 import (
 	"log"
 	"math"
-	"runtime"
 	"sync/atomic"
 
 	"github.com/gopxl/beep/v2"
@@ -40,12 +39,20 @@ type Deck struct {
 	volume SmoothParam
 	gain   SmoothParam // Trim/gain knob: 0.0-2.0 multiplier (1.0 = unity)
 
-	// Fade envelope for click-free play/stop
+	// Fade envelope for click-free play/stop — ONLY accessed from audio thread
 	fade FadeEnvelope
 
 	// Atomic control values
-	playing  atomic.Bool
+	playing   atomic.Bool
 	tempoBits atomic.Uint64 // float64 as bits, ratio
+
+	// Pending commands from non-audio threads (written by UI/MIDI, consumed by audio thread)
+	pendingSeek  atomic.Uint64 // float64 bits; NaN = no pending seek
+	pendingFade  atomic.Int32  // 0=none, 1=fade-in, 2=fade-out
+	pendingReset atomic.Bool   // set by LoadTrack, audio thread resets all state
+
+	// Position snapshot for UI (written by audio thread, read by UI/position loop)
+	posSnapshot atomic.Uint64 // float64 bits, fractional position 0.0-1.0
 
 	track    atomic.Pointer[model.Track]
 	waveform atomic.Pointer[WaveformData]
@@ -57,11 +64,12 @@ func NewDeck(id int, sampleRate int, bus *event.Bus) *Deck {
 		sampleRate: sampleRate,
 		bus:        bus,
 		eq:         NewThreeBandEQ(sampleRate),
-		volume:     NewSmoothParam(0.8, sampleRate, 0.005),
-		gain:       NewSmoothParam(1.0, sampleRate, 0.005),
 		fade:       NewFadeEnvelope(sampleRate, 0.01),
 	}
+	d.volume.Init(0.8, sampleRate, 0.005)
+	d.gain.Init(1.0, sampleRate, 0.005)
 	d.storeFloat(&d.tempoBits, 1.0)
+	d.storeFloat(&d.pendingSeek, math.NaN()) // sentinel: no pending seek
 	return d
 }
 
@@ -82,7 +90,7 @@ func (d *Deck) LoadTrack(track *model.Track) error {
 	needsResample := format.SampleRate != beep.SampleRate(d.sampleRate)
 	if needsResample {
 		log.Printf("deck %d: resampling %d → %d Hz", d.id, format.SampleRate, d.sampleRate)
-		streamer = beep.Resample(6, format.SampleRate, beep.SampleRate(d.sampleRate), src)
+		streamer = beep.Resample(4, format.SampleRate, beep.SampleRate(d.sampleRate), src)
 	}
 
 	// Pre-allocate PCM buffer based on known track length to avoid append/realloc
@@ -109,19 +117,14 @@ func (d *Deck) LoadTrack(track *model.Track) error {
 
 	log.Printf("deck %d: decoded %d samples (%.1f sec)", d.id, len(pcm), float64(len(pcm))/float64(d.sampleRate))
 
-	// Force GC now to clean up decode buffers before playback starts
-	runtime.GC()
-
-	// Atomic swap — audio thread picks this up on next Stream() call
-	d.pcm.Store(&pcmBuffer{samples: pcm, len: len(pcm)})
-	d.pos = 0
-	d.fpos = 0
+	// Stop playback BEFORE swapping the PCM buffer so the callback never
+	// reads the new buffer at the old position (race window elimination).
 	d.playing.Store(false)
+	d.pendingFade.Store(0)                                // clear any pending fade
+	d.storeFloat(&d.pendingSeek, math.NaN())              // clear any pending seek
+	d.pcm.Store(&pcmBuffer{samples: pcm, len: len(pcm)}) // swap buffer
 	d.track.Store(track)
-
-	// Reset EQ and fade state for new track
-	d.eq.Reset()
-	d.fade = NewFadeEnvelope(d.sampleRate, 0.01)
+	d.pendingReset.Store(true)                             // signal audio thread to reset pos/fade/EQ
 
 	go d.generateWaveform()
 
@@ -138,11 +141,11 @@ func (d *Deck) Play() {
 	}
 	log.Printf("deck %d: Play()", d.id)
 	d.playing.Store(true)
-	d.fade.TriggerFadeIn()
+	d.pendingFade.Store(1) // audio thread will trigger fade-in
 }
 
 func (d *Deck) Pause() {
-	d.fade.TriggerFadeOut()
+	d.pendingFade.Store(2) // audio thread will trigger fade-out
 	// playing will be set to false when fade-out completes in Stream()
 }
 
@@ -192,27 +195,20 @@ func (d *Deck) SetTempo(ratio float64) {
 }
 
 func (d *Deck) Seek(pos float64) {
-	p := d.pcm.Load()
-	if p == nil {
+	if d.pcm.Load() == nil {
 		return
 	}
-	newPos := int(pos * float64(p.len))
-	if newPos < 0 {
-		newPos = 0
+	if pos < 0 {
+		pos = 0
 	}
-	if newPos >= p.len {
-		newPos = p.len - 1
+	if pos > 1 {
+		pos = 1
 	}
-	d.pos = newPos
-	d.fpos = float64(newPos)
+	d.storeFloat(&d.pendingSeek, pos) // audio thread will apply
 }
 
 func (d *Deck) Position() float64 {
-	p := d.pcm.Load()
-	if p == nil || p.len == 0 {
-		return 0
-	}
-	return float64(d.pos) / float64(p.len)
+	return d.loadFloat(&d.posSnapshot)
 }
 
 func (d *Deck) Track() *model.Track     { return d.track.Load() }
@@ -233,6 +229,7 @@ func (d *Deck) EffectiveBPM() float64 {
 // Stream fills the output buffer with audio samples.
 // Called ONLY from the malgo audio callback thread.
 // Zero allocations, zero I/O, zero locks — just array reads and math.
+// All mutable state (pos, fpos, fade, EQ delay) is only modified here.
 func (d *Deck) Stream(samples [][2]float32) {
 	p := d.pcm.Load()
 	if p == nil {
@@ -241,6 +238,45 @@ func (d *Deck) Stream(samples [][2]float32) {
 		}
 		return
 	}
+
+	// ── Process pending commands from non-audio threads ──
+
+	// 1. Reset (LoadTrack completed) — must be first so fade/seek apply to clean state
+	if d.pendingReset.CompareAndSwap(true, false) {
+		d.pos = 0
+		d.fpos = 0
+		d.fade = NewFadeEnvelope(d.sampleRate, 0.01)
+		d.eq.Reset()
+	}
+
+	// 2. Fade command (Play/Pause)
+	if cmd := d.pendingFade.Swap(0); cmd != 0 {
+		switch cmd {
+		case 1:
+			d.fade.TriggerFadeIn()
+		case 2:
+			d.fade.TriggerFadeOut()
+		}
+	}
+
+	// 3. Seek (CAS to avoid clearing a newer seek that arrived between load and swap)
+	seekBits := d.pendingSeek.Load()
+	seekVal := math.Float64frombits(seekBits)
+	if !math.IsNaN(seekVal) {
+		if d.pendingSeek.CompareAndSwap(seekBits, math.Float64bits(math.NaN())) {
+			newPos := int(seekVal * float64(p.len))
+			if newPos < 0 {
+				newPos = 0
+			}
+			if newPos >= p.len {
+				newPos = p.len - 1
+			}
+			d.pos = newPos
+			d.fpos = float64(newPos)
+		}
+	}
+
+	// ── Audio processing ──
 
 	// If not playing and fade is silent, zero-fill
 	if !d.playing.Load() && d.fade.State() == FadeSilent {
@@ -254,8 +290,9 @@ func (d *Deck) Stream(samples [][2]float32) {
 	n := len(samples)
 
 	if tempo == 1.0 {
-		// Fast path: no tempo change, just copy
-		remaining := p.len - d.pos
+		// Fast path: no tempo change, direct copy (fpos stays source of truth)
+		startIdx := int(d.fpos)
+		remaining := p.len - startIdx
 		if remaining <= 0 {
 			for i := range samples {
 				samples[i] = [2]float32{}
@@ -268,16 +305,13 @@ func (d *Deck) Stream(samples [][2]float32) {
 		if count > remaining {
 			count = remaining
 		}
-		copy(samples[:count], p.samples[d.pos:d.pos+count])
-		d.pos += count
-		d.fpos = float64(d.pos)
-		// Zero fill remainder
+		copy(samples[:count], p.samples[startIdx:startIdx+count])
+		d.fpos += float64(count)
 		for i := count; i < n; i++ {
 			samples[i] = [2]float32{}
 		}
 	} else {
-		// Tempo: linear interpolation with float64 accumulator for drift-free tracking
-		d.fpos = float64(d.pos)
+		// Tempo: linear interpolation with float64 accumulator (fpos is persistent)
 		for i := 0; i < n; i++ {
 			idx := int(d.fpos)
 			if idx >= p.len-1 {
@@ -289,11 +323,11 @@ func (d *Deck) Stream(samples [][2]float32) {
 			samples[i][1] = p.samples[idx][1]*(1-frac) + p.samples[idx+1][1]*frac
 			d.fpos += tempo
 		}
-		d.pos = int(d.fpos)
-		if d.pos >= p.len {
-			d.playing.Store(false)
-			d.fade = NewFadeEnvelope(d.sampleRate, 0.01)
-		}
+	}
+	d.pos = int(d.fpos)
+	if d.pos >= p.len {
+		d.playing.Store(false)
+		d.fade = NewFadeEnvelope(d.sampleRate, 0.01)
 	}
 
 	// Apply EQ in-place (lock-free biquad filters)
@@ -313,6 +347,11 @@ func (d *Deck) Stream(samples [][2]float32) {
 		// Fade-out complete — already paused
 	} else if state == FadeSilent {
 		d.playing.Store(false)
+	}
+
+	// Update position snapshot for UI (atomic, read by Position())
+	if p.len > 0 {
+		d.storeFloat(&d.posSnapshot, float64(d.pos)/float64(p.len))
 	}
 }
 

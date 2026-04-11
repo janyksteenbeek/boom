@@ -159,15 +159,10 @@ func (m *Manager) handleMessage(msg midi.Message, timestampms int32) {
 
 	switch {
 	case msg.GetNoteOn(&channel, &data1, &data2):
-		log.Printf("MIDI: NoteOn ch=%d note=%d vel=%d", channel, data1, data2)
 		mapper.HandleNoteOn(channel, data1, data2)
 	case msg.GetNoteOff(&channel, &data1, &data2):
 		mapper.HandleNoteOff(channel, data1)
 	case msg.GetControlChange(&channel, &data1, &data2):
-		// Only log non-jog CC (jog wheels spam too much)
-		if data1 != 33 && data1 != 34 && data1 != 41 {
-			log.Printf("MIDI: CC ch=%d cc=%d val=%d", channel, data1, data2)
-		}
 		mapper.HandleCC(channel, data1, data2)
 	}
 }

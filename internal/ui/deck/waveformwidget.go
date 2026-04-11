@@ -39,6 +39,10 @@ func (w *WaveformWidget) SetPeaks(peaks []float64) {
 
 func (w *WaveformWidget) SetPosition(pos float64) {
 	w.mu.Lock()
+	if math.Abs(w.position-pos) < 0.001 {
+		w.mu.Unlock()
+		return
+	}
 	w.position = pos
 	w.mu.Unlock()
 	fyne.Do(func() {

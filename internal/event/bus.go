@@ -7,12 +7,39 @@ type Bus struct {
 	mu       sync.RWMutex
 	handlers map[Topic][]Handler
 	global   []Handler
+	asyncCh  chan Event
+	stopCh   chan struct{}
 }
+
+const asyncWorkers = 4
+const asyncBufSize = 256
 
 // New creates a new event bus.
 func New() *Bus {
-	return &Bus{
+	b := &Bus{
 		handlers: make(map[Topic][]Handler),
+		asyncCh:  make(chan Event, asyncBufSize),
+		stopCh:   make(chan struct{}),
+	}
+	for i := 0; i < asyncWorkers; i++ {
+		go b.asyncWorker()
+	}
+	return b
+}
+
+// Stop shuts down async workers.
+func (b *Bus) Stop() {
+	close(b.stopCh)
+}
+
+func (b *Bus) asyncWorker() {
+	for {
+		select {
+		case e := <-b.asyncCh:
+			b.Publish(e)
+		case <-b.stopCh:
+			return
+		}
 	}
 }
 
@@ -46,8 +73,12 @@ func (b *Bus) Publish(e Event) {
 	}
 }
 
-// PublishAsync sends an event asynchronously via a goroutine.
-// Use this for non-latency-sensitive paths (UI updates).
+// PublishAsync sends an event asynchronously via a fixed worker pool.
+// Non-blocking: drops events if the channel is full (better than blocking audio).
 func (b *Bus) PublishAsync(e Event) {
-	go b.Publish(e)
+	select {
+	case b.asyncCh <- e:
+	default:
+		// Channel full — drop event to avoid blocking callers
+	}
 }

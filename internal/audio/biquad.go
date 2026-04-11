@@ -15,22 +15,23 @@ const (
 	BiquadPeaking
 )
 
-// biquadCoeffs holds the immutable filter coefficients.
-// Stored as float32 for cache-friendly audio processing.
+// biquadCoeffs holds the immutable filter coefficients in float64
+// for full numerical precision during processing.
 type biquadCoeffs struct {
-	b0, b1, b2 float32
-	a1, a2     float32
+	b0, b1, b2 float64
+	a1, a2     float64
 }
 
 // BiquadFilter is a 2nd-order IIR biquad filter for audio DSP.
 // Coefficient updates are lock-free via atomic pointer swap.
+// Processing uses float64 internally to prevent quantization-induced instability.
 // Process is NOT thread-safe with itself — only call from one goroutine (the audio callback).
 type BiquadFilter struct {
 	coeffs unsafe.Pointer // *biquadCoeffs, swapped atomically
 
-	// Per-channel delay state (only accessed from audio thread)
-	x1, x2 [2]float32
-	y1, y2 [2]float32
+	// Per-channel delay state in float64 (only accessed from audio thread)
+	x1, x2 [2]float64
+	y1, y2 [2]float64
 }
 
 // NewBiquadFilter creates a biquad filter.
@@ -48,6 +49,7 @@ func (f *BiquadFilter) Update(filterType BiquadType, sampleRate, freq, gain, q f
 }
 
 // ProcessBuffer applies the filter to a buffer of stereo samples in-place.
+// Uses float64 internally for full numerical precision.
 // Only call from the audio callback goroutine.
 func (f *BiquadFilter) ProcessBuffer(samples [][2]float32, n int) {
 	c := (*biquadCoeffs)(atomic.LoadPointer(&f.coeffs))
@@ -63,13 +65,21 @@ func (f *BiquadFilter) ProcessBuffer(samples [][2]float32, n int) {
 		y1, y2 := f.y1[ch], f.y2[ch]
 
 		for i := 0; i < n; i++ {
-			x0 := samples[i][ch]
+			x0 := float64(samples[i][ch])
 			y0 := b0*x0 + b1*x1 + b2*x2 - a1*y1 - a2*y2
+
+			// NaN guard: if filter output is NaN, reset state and output silence
+			if y0 != y0 {
+				x1, x2, y1, y2 = 0, 0, 0, 0
+				samples[i][ch] = 0
+				continue
+			}
+
 			x2 = x1
 			x1 = x0
 			y2 = y1
 			y1 = y0
-			samples[i][ch] = y0
+			samples[i][ch] = float32(y0)
 		}
 
 		f.x1[ch], f.x2[ch] = x1, x2
@@ -79,14 +89,13 @@ func (f *BiquadFilter) ProcessBuffer(samples [][2]float32, n int) {
 
 // Reset clears the filter delay state.
 func (f *BiquadFilter) Reset() {
-	f.x1 = [2]float32{}
-	f.x2 = [2]float32{}
-	f.y1 = [2]float32{}
-	f.y2 = [2]float32{}
+	f.x1 = [2]float64{}
+	f.x2 = [2]float64{}
+	f.y1 = [2]float64{}
+	f.y2 = [2]float64{}
 }
 
-// calcCoeffs computes biquad coefficients using float64 for numerical stability,
-// then stores the result as float32 for cache-friendly processing.
+// calcCoeffs computes biquad coefficients in float64 for full numerical precision.
 func calcCoeffs(filterType BiquadType, sampleRate, freq, gain, q float64) *biquadCoeffs {
 	w0 := 2.0 * math.Pi * freq / sampleRate
 	cosW0 := math.Cos(w0)
@@ -125,7 +134,7 @@ func calcCoeffs(filterType BiquadType, sampleRate, freq, gain, q float64) *biqua
 	}
 
 	return &biquadCoeffs{
-		b0: float32(b0 / a0), b1: float32(b1 / a0), b2: float32(b2 / a0),
-		a1: float32(a1 / a0), a2: float32(a2 / a0),
+		b0: b0 / a0, b1: b1 / a0, b2: b2 / a0,
+		a1: a1 / a0, a2: a2 / a0,
 	}
 }

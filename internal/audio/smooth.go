@@ -13,15 +13,12 @@ type SmoothParam struct {
 	coeff   float32      // smoothing coefficient (0.0–1.0)
 }
 
-// NewSmoothParam creates a parameter smoother with the given initial value.
+// InitSmoothParam initializes a parameter smoother in place with the given initial value.
 // smoothTimeSec is the approximate time to reach the target (~5ms recommended for audio).
-func NewSmoothParam(initial float32, sampleRate int, smoothTimeSec float64) SmoothParam {
-	sp := SmoothParam{
-		current: initial,
-		coeff:   float32(1.0 - math.Exp(-1.0/(smoothTimeSec*float64(sampleRate)))),
-	}
-	sp.target.Store(math.Float32bits(initial))
-	return sp
+func (s *SmoothParam) Init(initial float32, sampleRate int, smoothTimeSec float64) {
+	s.current = initial
+	s.coeff = float32(1.0 - math.Exp(-1.0/(smoothTimeSec*float64(sampleRate))))
+	s.target.Store(math.Float32bits(initial))
 }
 
 // Set atomically stores a new target value. Safe to call from any goroutine.

@@ -4,6 +4,19 @@ import "math"
 
 const maxBufSize = 16384 // Pre-allocated max; handles any reasonable callback size
 
+// Pre-computed equal-power crossfade lookup table — eliminates trig from audio hot path.
+const crossfadeTableSize = 1024
+
+var crossfadeTable [crossfadeTableSize][2]float32
+
+func init() {
+	for i := 0; i < crossfadeTableSize; i++ {
+		pos := float64(i) / float64(crossfadeTableSize-1)
+		crossfadeTable[i][0] = float32(math.Cos(pos * math.Pi / 2))
+		crossfadeTable[i][1] = float32(math.Sin(pos * math.Pi / 2))
+	}
+}
+
 // MasterMixer combines deck outputs with crossfade and master volume.
 type MasterMixer struct {
 	decks []*Deck
@@ -20,11 +33,11 @@ type MasterMixer struct {
 
 func NewMasterMixer(decks []*Deck, sampleRate int) *MasterMixer {
 	m := &MasterMixer{
-		decks:      decks,
-		crossfader: NewSmoothParam(0.5, sampleRate, 0.005),
-		masterVol:  NewSmoothParam(0.8, sampleRate, 0.005),
-		cueVol:     NewSmoothParam(0.8, sampleRate, 0.005),
+		decks: decks,
 	}
+	m.crossfader.Init(0.5, sampleRate, 0.005)
+	m.masterVol.Init(0.8, sampleRate, 0.005)
+	m.cueVol.Init(0.8, sampleRate, 0.005)
 	return m
 }
 
@@ -102,7 +115,12 @@ func (m *MasterMixer) streamChunk(samples [][2]float32) {
 }
 
 func crossfadeGains(pos float32) (gainA, gainB float32) {
-	gainA = float32(math.Cos(float64(pos) * math.Pi / 2))
-	gainB = float32(math.Sin(float64(pos) * math.Pi / 2))
-	return
+	idx := int(pos * float32(crossfadeTableSize-1))
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= crossfadeTableSize {
+		idx = crossfadeTableSize - 1
+	}
+	return crossfadeTable[idx][0], crossfadeTable[idx][1]
 }

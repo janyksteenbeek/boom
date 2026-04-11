@@ -142,8 +142,6 @@ func (m *Mapper) HandleCC(channel, cc, value uint8) {
 
 	rm := m.compiled.InputMap[key]
 	if rm == nil {
-		log.Printf("mapper: NO MATCH for CC ch=%d cc=%d (key={Ch:%d,St:0x%X,Nr:%d}) inputMap has %d entries",
-			channel, cc, key.Channel, key.Status, key.Number, len(m.compiled.InputMap))
 		return
 	}
 
@@ -159,7 +157,6 @@ func (m *Mapper) HandleCC(channel, cc, value uint8) {
 		if rm.Control.Range != nil && rm.Control.Range.Inverted {
 			normalized = 1.0 - normalized
 		}
-		log.Printf("mapper: CC matched → action=%s deck=%d val=%.2f (raw=%d)", action, rm.Deck, normalized, value)
 		m.dispatchContinuous(action, rm.Deck, normalized, &rm.Control)
 
 	case "button":
