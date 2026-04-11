@@ -213,8 +213,10 @@ func (s *Service) processJob(job analysisJob) {
 		log.Printf("analysis: persist %s: %v", job.track.ID, err)
 	}
 
-	// Publish completion event
-	s.bus.PublishAsync(event.Event{
+	// Publish completion event synchronously — analysis runs on its own
+	// goroutine so this won't block the audio thread, and avoids being
+	// dropped when the async channel is saturated by position updates.
+	s.bus.Publish(event.Event{
 		Topic:  event.TopicAnalysis,
 		Action: event.ActionAnalyzeComplete,
 		DeckID: job.deckID,
@@ -254,10 +256,10 @@ func (s *Service) processJob(job analysisJob) {
 		}
 	}
 
-	// Also publish BPM/Key detected for deck updates
+	// Also publish BPM/Key detected for deck updates (sync for reliability)
 	if job.deckID > 0 {
 		if bpm > 0 {
-			s.bus.PublishAsync(event.Event{
+			s.bus.Publish(event.Event{
 				Topic:  event.TopicEngine,
 				Action: event.ActionBPMDetected,
 				DeckID: job.deckID,
@@ -265,7 +267,7 @@ func (s *Service) processJob(job analysisJob) {
 			})
 		}
 		if key != "" {
-			s.bus.PublishAsync(event.Event{
+			s.bus.Publish(event.Event{
 				Topic:   event.TopicEngine,
 				Action:  event.ActionKeyDetected,
 				DeckID:  job.deckID,

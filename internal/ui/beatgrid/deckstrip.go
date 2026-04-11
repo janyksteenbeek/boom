@@ -1,6 +1,8 @@
 package beatgrid
 
 import (
+	"image"
+	"image/color"
 	"sync"
 	"time"
 
@@ -11,26 +13,23 @@ import (
 	boomtheme "github.com/janyksteenbeek/boom/internal/ui/theme"
 )
 
-const (
-	maxBars      = 2000
-	maxBeatLines = 200
-)
-
 // DeckStrip renders a single deck's scrolling waveform with beat markers.
 // The view is centered on the current playback position and shows a
 // configurable fraction of the track (zoom level).
+// Uses canvas.Raster for efficient pixel-level rendering instead of
+// thousands of individual canvas objects.
 type DeckStrip struct {
 	widget.BaseWidget
 
-	mu       sync.RWMutex
-	deckID   int
-	peaksLow []float64
-	peaksMid []float64
+	mu        sync.RWMutex
+	deckID    int
+	peaksLow  []float64
+	peaksMid  []float64
 	peaksHigh []float64
-	beatGrid []float64     // beat positions in seconds
-	duration time.Duration // track duration
-	position float64       // 0.0-1.0 normalized
-	zoom     float64       // visible fraction of track (0.02-1.0)
+	beatGrid  []float64     // beat positions in seconds
+	duration  time.Duration // track duration
+	position  float64       // 0.0-1.0 normalized
+	zoom      float64       // visible fraction of track (0.02-1.0)
 }
 
 func NewDeckStrip(deckID int) *DeckStrip {
@@ -91,16 +90,13 @@ func (d *DeckStrip) CreateRenderer() fyne.WidgetRenderer {
 // --- Renderer ---
 
 type deckStripRenderer struct {
-	widget    *DeckStrip
-	bg        *canvas.Rectangle
-	topLine   *canvas.Line
-	empty     *canvas.Text
-	barsLow   []*canvas.Line
-	barsMid   []*canvas.Line
-	barsHigh  []*canvas.Line
-	beatLines []*canvas.Line
-	head      *canvas.Line
-	size      fyne.Size
+	widget  *DeckStrip
+	bg      *canvas.Rectangle
+	topLine *canvas.Line
+	empty   *canvas.Text
+	raster  *canvas.Raster
+	img     *image.RGBA
+	size    fyne.Size
 }
 
 func (r *deckStripRenderer) buildObjects() {
@@ -115,28 +111,9 @@ func (r *deckStripRenderer) buildObjects() {
 	r.empty.TextSize = 10
 	r.empty.Alignment = fyne.TextAlignCenter
 
-	r.barsLow = make([]*canvas.Line, maxBars)
-	r.barsMid = make([]*canvas.Line, maxBars)
-	r.barsHigh = make([]*canvas.Line, maxBars)
-	for i := 0; i < maxBars; i++ {
-		r.barsLow[i] = canvas.NewLine(boomtheme.ColorWaveformLow)
-		r.barsLow[i].Hidden = true
-		r.barsMid[i] = canvas.NewLine(boomtheme.ColorWaveformMid)
-		r.barsMid[i].Hidden = true
-		r.barsHigh[i] = canvas.NewLine(boomtheme.ColorWaveformHigh)
-		r.barsHigh[i].Hidden = true
-	}
-
-	r.beatLines = make([]*canvas.Line, maxBeatLines)
-	for i := 0; i < maxBeatLines; i++ {
-		r.beatLines[i] = canvas.NewLine(boomtheme.ColorBeatLine)
-		r.beatLines[i].StrokeWidth = 0.5
-		r.beatLines[i].Hidden = true
-	}
-
-	r.head = canvas.NewLine(boomtheme.ColorPlayhead)
-	r.head.StrokeWidth = 1.5
-	r.head.Hidden = true
+	r.raster = canvas.NewRaster(r.draw)
+	r.raster.ScaleMode = canvas.ImageScalePixels
+	r.raster.Hidden = true
 }
 
 func (r *deckStripRenderer) Layout(size fyne.Size) {
@@ -151,16 +128,6 @@ func (r *deckStripRenderer) MinSize() fyne.Size {
 }
 
 func (r *deckStripRenderer) Refresh() {
-	r.widget.mu.RLock()
-	peaksLow := r.widget.peaksLow
-	peaksMid := r.widget.peaksMid
-	peaksHigh := r.widget.peaksHigh
-	beatGrid := r.widget.beatGrid
-	duration := r.widget.duration
-	position := r.widget.position
-	zoom := r.widget.zoom
-	r.widget.mu.RUnlock()
-
 	size := r.widget.Size()
 	if size.Width <= 0 || size.Height <= 0 {
 		return
@@ -172,20 +139,69 @@ func (r *deckStripRenderer) Refresh() {
 	r.topLine.Position1 = fyne.NewPos(0, 0.5)
 	r.topLine.Position2 = fyne.NewPos(size.Width, 0.5)
 
-	peakCount := len(peaksLow)
-	hasPeaks := peakCount > 0 && len(peaksMid) == peakCount && len(peaksHigh) == peakCount
+	r.widget.mu.RLock()
+	hasPeaks := len(r.widget.peaksLow) > 0
+	r.widget.mu.RUnlock()
+
 	r.empty.Hidden = hasPeaks
-	r.head.Hidden = !hasPeaks
+	r.raster.Hidden = !hasPeaks
 
-	centerY := size.Height / 2
-
-	if !hasPeaks {
+	if hasPeaks {
+		r.raster.Resize(size)
+		r.raster.Move(fyne.NewPos(0, 0))
+		r.raster.Refresh()
+	} else {
+		centerY := size.Height / 2
 		r.empty.Move(fyne.NewPos(0, centerY-6))
 		r.empty.Resize(fyne.NewSize(size.Width, 12))
-		r.hideAllBars()
-		r.hideAllBeats()
-		r.refreshAll()
-		return
+	}
+
+	r.bg.Refresh()
+	r.topLine.Refresh()
+	r.empty.Refresh()
+}
+
+// draw is called by Fyne's render thread to produce the raster image.
+// It reads widget state under RLock and draws everything into a single
+// image buffer: waveform, beat markers, and playhead.
+func (r *deckStripRenderer) draw(w, h int) image.Image {
+	if w <= 0 || h <= 0 {
+		return image.NewRGBA(image.Rect(0, 0, 1, 1))
+	}
+
+	// Snapshot widget state
+	r.widget.mu.RLock()
+	peaksLow := r.widget.peaksLow
+	peaksMid := r.widget.peaksMid
+	peaksHigh := r.widget.peaksHigh
+	beatGrid := r.widget.beatGrid
+	duration := r.widget.duration
+	position := r.widget.position
+	zoom := r.widget.zoom
+	r.widget.mu.RUnlock()
+
+	// Resize image buffer if needed
+	if r.img == nil || r.img.Bounds().Dx() != w || r.img.Bounds().Dy() != h {
+		r.img = image.NewRGBA(image.Rect(0, 0, w, h))
+	}
+
+	// Clear with background color (fill first row, then copy)
+	bg := boomtheme.ColorWaveformBg
+	pix := r.img.Pix
+	stride := r.img.Stride
+	for i := 0; i < stride; i += 4 {
+		pix[i] = bg.R
+		pix[i+1] = bg.G
+		pix[i+2] = bg.B
+		pix[i+3] = 255
+	}
+	for y := 1; y < h; y++ {
+		copy(pix[y*stride:(y+1)*stride], pix[:stride])
+	}
+
+	peakCount := len(peaksLow)
+	if peakCount == 0 || len(peaksMid) != peakCount || len(peaksHigh) != peakCount {
+		return r.img
 	}
 
 	// Compute visible window
@@ -195,7 +211,6 @@ func (r *deckStripRenderer) Refresh() {
 	viewStart := position - zoom/2
 	viewEnd := position + zoom/2
 
-	// Clamp to track boundaries
 	if viewStart < 0 {
 		viewEnd -= viewStart
 		viewStart = 0
@@ -216,31 +231,15 @@ func (r *deckStripRenderer) Refresh() {
 		viewRange = 1.0
 	}
 
-	// Render waveform bars using pixel-stepping with linear interpolation.
-	// Each bar is ~1.5px wide, and we interpolate between the 400 peak data
-	// points to fill the full widget width smoothly at any zoom level.
-	maxH := centerY - 2 // padding
-	idx := 0
+	centerY := h / 2
+	maxH := float64(centerY - 2)
+	headX := int(((position - viewStart) / viewRange) * float64(w))
 
-	// Playhead x position
-	headX := float32((position - viewStart) / viewRange) * size.Width
-
-	// Step through pixels at ~1.5px intervals
-	barW := float32(1.5)
-	numBars := int(size.Width / barW)
-	if numBars > maxBars {
-		numBars = maxBars
-	}
-
-	for b := 0; b < numBars; b++ {
-		x := float32(b) * barW
-		cx := x + barW/2
-
-		// Map pixel position to track position, then to peak index (float)
-		trackPos := viewStart + float64(x/size.Width)*viewRange
+	// Draw waveform — one pixel column at a time
+	for x := 0; x < w; x++ {
+		trackPos := viewStart + float64(x)/float64(w)*viewRange
 		peakIdxF := trackPos * float64(peakCount)
 
-		// Linear interpolation between adjacent peaks
 		idx0 := int(peakIdxF)
 		if idx0 < 0 {
 			idx0 = 0
@@ -259,149 +258,135 @@ func (r *deckStripRenderer) Refresh() {
 		pMid := peaksMid[idx0]*(1-frac) + peaksMid[idx1]*frac
 		pHigh := peaksHigh[idx0]*(1-frac) + peaksHigh[idx1]*frac
 
-		// Stacked bar heights (weighted proportions)
-		const wLow, wMid, wHigh float32 = 0.50, 0.30, 0.20
-		hLow := float32(pLow) * wLow * maxH
-		hMid := float32(pMid) * wMid * maxH
-		hHigh := float32(pHigh) * wHigh * maxH
+		hLow := int(pLow * 0.50 * maxH)
+		hMid := int(pMid * 0.30 * maxH)
+		hHigh := int(pHigh * 0.20 * maxH)
 		totalH := hLow + hMid + hHigh
 		lowMidH := hLow + hMid
 
-		beforePlayhead := cx < headX
+		beforePlayhead := x < headX
 
-		// High (outermost, drawn behind): fills full stacked height
-		bar := r.barsHigh[b]
-		bar.StrokeWidth = barW
-		bar.Position1 = fyne.NewPos(cx, centerY-totalH)
-		bar.Position2 = fyne.NewPos(cx, centerY+totalH)
-		if beforePlayhead {
-			bar.StrokeColor = boomtheme.ColorWaveformHighDim
-		} else {
-			bar.StrokeColor = boomtheme.ColorWaveformHigh
+		// Draw stacked layers (outside-in: high → mid → low)
+		if totalH > 0 {
+			var cHigh, cMid, cLow color.RGBA
+			if beforePlayhead {
+				cHigh = boomtheme.ColorWaveformHighDim
+				cMid = boomtheme.ColorWaveformMidDim
+				cLow = boomtheme.ColorWaveformLowDim
+			} else {
+				cHigh = boomtheme.ColorWaveformHigh
+				cMid = boomtheme.ColorWaveformMid
+				cLow = boomtheme.ColorWaveformLow
+			}
+
+			// High (outermost)
+			r.vLine(x, centerY-totalH, centerY+totalH, cHigh)
+			// Mid (middle)
+			if lowMidH > 0 {
+				r.vLine(x, centerY-lowMidH, centerY+lowMidH, cMid)
+			}
+			// Low (innermost, bass core)
+			if hLow > 0 {
+				r.vLine(x, centerY-hLow, centerY+hLow, cLow)
+			}
 		}
-		bar.Hidden = totalH < 0.3
-		bar.Refresh()
-
-		// Mid (middle layer): covers low+mid area
-		bar = r.barsMid[b]
-		bar.StrokeWidth = barW
-		bar.Position1 = fyne.NewPos(cx, centerY-lowMidH)
-		bar.Position2 = fyne.NewPos(cx, centerY+lowMidH)
-		if beforePlayhead {
-			bar.StrokeColor = boomtheme.ColorWaveformMidDim
-		} else {
-			bar.StrokeColor = boomtheme.ColorWaveformMid
-		}
-		bar.Hidden = lowMidH < 0.3
-		bar.Refresh()
-
-		// Low (innermost, drawn on top): bass core
-		bar = r.barsLow[b]
-		bar.StrokeWidth = barW
-		bar.Position1 = fyne.NewPos(cx, centerY-hLow)
-		bar.Position2 = fyne.NewPos(cx, centerY+hLow)
-		if beforePlayhead {
-			bar.StrokeColor = boomtheme.ColorWaveformLowDim
-		} else {
-			bar.StrokeColor = boomtheme.ColorWaveformLow
-		}
-		bar.Hidden = hLow < 0.3
-		bar.Refresh()
-
-		idx = b + 1
 	}
 
-	// Hide unused bars
-	for i := idx; i < maxBars; i++ {
-		r.barsLow[i].Hidden = true
-		r.barsMid[i].Hidden = true
-		r.barsHigh[i].Hidden = true
-	}
-
-	// Render beat markers
-	beatIdx := 0
+	// Draw beat markers on top of waveform
 	durSec := duration.Seconds()
 	if durSec > 0 && len(beatGrid) > 0 {
 		for i, beatTime := range beatGrid {
-			if beatIdx >= maxBeatLines {
-				break
-			}
 			beatNorm := beatTime / durSec
 			xFrac := (beatNorm - viewStart) / viewRange
 			if xFrac < -0.01 || xFrac > 1.01 {
 				continue
 			}
-			bx := float32(xFrac) * size.Width
+			bx := int(xFrac * float64(w))
 
-			line := r.beatLines[beatIdx]
-			line.Position1 = fyne.NewPos(bx, 2)
-			line.Position2 = fyne.NewPos(bx, size.Height-2)
-			// Every 4th beat (downbeat) is stronger
+			var c color.RGBA
 			if i%4 == 0 {
-				line.StrokeColor = boomtheme.ColorBeatLineStrong
-				line.StrokeWidth = 1.0
+				c = boomtheme.ColorBeatLineStrong
 			} else {
-				line.StrokeColor = boomtheme.ColorBeatLine
-				line.StrokeWidth = 0.5
+				c = boomtheme.ColorBeatLine
 			}
-			line.Hidden = false
-			line.Refresh()
-			beatIdx++
+			r.vLineAlpha(bx, 2, h-3, c)
 		}
 	}
-	for i := beatIdx; i < maxBeatLines; i++ {
-		r.beatLines[i].Hidden = true
-	}
 
-	// Playhead — fixed at current position within view
-	r.head.Position1 = fyne.NewPos(headX, 0)
-	r.head.Position2 = fyne.NewPos(headX, size.Height)
-	r.head.Refresh()
+	// Draw playhead (2px wide for visibility)
+	playheadColor := boomtheme.ColorPlayhead
+	r.vLineAlpha(headX-1, 0, h-1, playheadColor)
+	r.vLineAlpha(headX, 0, h-1, playheadColor)
 
-	r.bg.Refresh()
-	r.topLine.Refresh()
-	r.empty.Refresh()
+	return r.img
 }
 
-func (r *deckStripRenderer) hideAllBars() {
-	for i := 0; i < maxBars; i++ {
-		r.barsLow[i].Hidden = true
-		r.barsMid[i].Hidden = true
-		r.barsHigh[i].Hidden = true
+// vLine draws a solid vertical line into the image buffer.
+func (r *deckStripRenderer) vLine(x, y0, y1 int, c color.RGBA) {
+	img := r.img
+	w := img.Bounds().Dx()
+	h := img.Bounds().Dy()
+	if x < 0 || x >= w {
+		return
+	}
+	if y0 < 0 {
+		y0 = 0
+	}
+	if y1 >= h {
+		y1 = h - 1
+	}
+	pix := img.Pix
+	stride := img.Stride
+	if c.A == 255 {
+		for y := y0; y <= y1; y++ {
+			off := y*stride + x*4
+			pix[off] = c.R
+			pix[off+1] = c.G
+			pix[off+2] = c.B
+			pix[off+3] = 255
+		}
+	} else {
+		a := uint32(c.A)
+		ia := 255 - a
+		for y := y0; y <= y1; y++ {
+			off := y*stride + x*4
+			pix[off] = uint8((uint32(pix[off])*ia + uint32(c.R)*a) / 255)
+			pix[off+1] = uint8((uint32(pix[off+1])*ia + uint32(c.G)*a) / 255)
+			pix[off+2] = uint8((uint32(pix[off+2])*ia + uint32(c.B)*a) / 255)
+			pix[off+3] = 255
+		}
 	}
 }
 
-func (r *deckStripRenderer) hideAllBeats() {
-	for i := 0; i < maxBeatLines; i++ {
-		r.beatLines[i].Hidden = true
+// vLineAlpha draws a vertical line with alpha blending onto existing pixels.
+func (r *deckStripRenderer) vLineAlpha(x, y0, y1 int, c color.RGBA) {
+	img := r.img
+	w := img.Bounds().Dx()
+	h := img.Bounds().Dy()
+	if x < 0 || x >= w {
+		return
 	}
-}
-
-func (r *deckStripRenderer) refreshAll() {
-	r.bg.Refresh()
-	r.topLine.Refresh()
-	r.empty.Refresh()
-	r.head.Refresh()
+	if y0 < 0 {
+		y0 = 0
+	}
+	if y1 >= h {
+		y1 = h - 1
+	}
+	a := uint32(c.A)
+	ia := 255 - a
+	pix := img.Pix
+	stride := img.Stride
+	for y := y0; y <= y1; y++ {
+		off := y*stride + x*4
+		pix[off] = uint8((uint32(pix[off])*ia + uint32(c.R)*a) / 255)
+		pix[off+1] = uint8((uint32(pix[off+1])*ia + uint32(c.G)*a) / 255)
+		pix[off+2] = uint8((uint32(pix[off+2])*ia + uint32(c.B)*a) / 255)
+		pix[off+3] = 255
+	}
 }
 
 func (r *deckStripRenderer) Objects() []fyne.CanvasObject {
-	objs := []fyne.CanvasObject{r.bg, r.topLine, r.empty}
-	// Stacked layers: high (back/outermost) → mid → low (front/innermost)
-	for _, b := range r.barsHigh {
-		objs = append(objs, b)
-	}
-	for _, b := range r.barsMid {
-		objs = append(objs, b)
-	}
-	for _, b := range r.barsLow {
-		objs = append(objs, b)
-	}
-	// Beat lines ON TOP of waveform for visibility
-	for _, b := range r.beatLines {
-		objs = append(objs, b)
-	}
-	objs = append(objs, r.head)
-	return objs
+	return []fyne.CanvasObject{r.bg, r.topLine, r.empty, r.raster}
 }
 
 func (r *deckStripRenderer) Destroy() {}
