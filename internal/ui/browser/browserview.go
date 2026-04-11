@@ -1,6 +1,8 @@
 package browser
 
 import (
+	"log"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
@@ -71,8 +73,54 @@ func NewBrowserView(bus *event.Bus) *BrowserView {
 		rightPanel,
 	)
 
+	b.subscribeEvents()
 	b.ExtendBaseWidget(b)
 	return b
+}
+
+func (b *BrowserView) subscribeEvents() {
+	// MIDI browse scroll: move selection up/down in the track list
+	b.bus.Subscribe(event.TopicLibrary, func(ev event.Event) error {
+		switch ev.Action {
+		case event.ActionBrowseScroll:
+			delta := int(ev.Value)
+			if delta == 0 {
+				return nil
+			}
+			b.trackList.ScrollBy(delta)
+		case event.ActionBrowseSelect:
+			// Load the currently highlighted track on the target deck
+			track := b.trackList.SelectedTrack()
+			if track != nil {
+				log.Printf("browser: browse_select → loading '%s' on deck %d", track.Title, b.targetDeck)
+				b.bus.PublishAsync(event.Event{
+					Topic:   event.TopicDeck,
+					Action:  event.ActionLoadTrack,
+					DeckID:  b.targetDeck,
+					Payload: track,
+				})
+			}
+		}
+		return nil
+	})
+
+	// MIDI load track buttons: intercept load_track events without payload,
+	// fill in the currently selected track and re-publish
+	b.bus.Subscribe(event.TopicDeck, func(ev event.Event) error {
+		if ev.Action == event.ActionLoadTrack && ev.Payload == nil && ev.DeckID > 0 {
+			track := b.trackList.SelectedTrack()
+			if track != nil {
+				log.Printf("browser: load_track deck %d → loading '%s'", ev.DeckID, track.Title)
+				b.bus.PublishAsync(event.Event{
+					Topic:   event.TopicDeck,
+					Action:  event.ActionLoadTrack,
+					DeckID:  ev.DeckID,
+					Payload: track,
+				})
+			}
+		}
+		return nil
+	})
 }
 
 func (b *BrowserView) SetTracks(tracks []model.Track) {

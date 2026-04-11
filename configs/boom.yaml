@@ -2,7 +2,7 @@
 # This file is auto-generated. Edit via Settings in the app.
 
 sample_rate: 48000
-buffer_size: 512
+buffer_size: 1024
 num_decks: 2
 music_dirs:
     - ~/Music

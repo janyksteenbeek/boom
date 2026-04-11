@@ -218,6 +218,17 @@ func (d *Deck) Position() float64 {
 func (d *Deck) Track() *model.Track     { return d.track.Load() }
 func (d *Deck) Waveform() *WaveformData { return d.waveform.Load() }
 func (d *Deck) SampleRate() int          { return d.sampleRate }
+func (d *Deck) Tempo() float64           { return d.loadFloat(&d.tempoBits) }
+
+// EffectiveBPM returns the track's BPM adjusted by the current tempo ratio.
+// Returns 0 if no track is loaded or the track has no BPM metadata.
+func (d *Deck) EffectiveBPM() float64 {
+	t := d.track.Load()
+	if t == nil || t.BPM <= 0 {
+		return 0
+	}
+	return t.BPM * d.Tempo()
+}
 
 // Stream fills the output buffer with audio samples.
 // Called ONLY from the malgo audio callback thread.

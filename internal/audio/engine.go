@@ -188,6 +188,25 @@ func (e *Engine) subscribeEvents() {
 			ratio := 0.5 + ev.Value*1.5
 			deck.SetTempo(ratio)
 
+		case event.ActionSync:
+			// Match this deck's tempo to the other deck's effective BPM
+			otherID := 2
+			if ev.DeckID == 2 {
+				otherID = 1
+			}
+			other := e.decks[otherID-1]
+			deckTrack := deck.Track()
+			otherTrack := other.Track()
+			if deckTrack == nil || otherTrack == nil || deckTrack.BPM <= 0 || otherTrack.BPM <= 0 {
+				log.Printf("engine: sync deck %d — missing BPM data", ev.DeckID)
+				return nil
+			}
+			otherBPM := other.EffectiveBPM()
+			newRatio := otherBPM / deckTrack.BPM
+			deck.SetTempo(newRatio)
+			log.Printf("engine: sync deck %d → %.1f BPM (matched deck %d at %.1f BPM, ratio %.3f)",
+				ev.DeckID, deckTrack.BPM*newRatio, otherID, otherBPM, newRatio)
+
 		case event.ActionLoadTrack:
 			track, ok := ev.Payload.(*model.Track)
 			if !ok {

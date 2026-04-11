@@ -20,12 +20,14 @@ import (
 type TrackList struct {
 	widget.BaseWidget
 
-	mu       sync.RWMutex
-	tracks   []model.Track
-	list     *widget.List
-	onSelect func(track model.Track)
-	sortCol  string
-	sortAsc  bool
+	mu               sync.RWMutex
+	tracks           []model.Track
+	list             *widget.List
+	onSelect         func(track model.Track)
+	sortCol          string
+	sortAsc          bool
+	selectedIdx      int
+	suppressOnSelect bool // guards against onSelect during programmatic Select()
 }
 
 func NewTrackList(onSelect func(track model.Track)) *TrackList {
@@ -133,6 +135,14 @@ func NewTrackList(onSelect func(track model.Track)) *TrackList {
 	)
 
 	t.list.OnSelected = func(i widget.ListItemID) {
+		t.mu.Lock()
+		t.selectedIdx = i
+		t.mu.Unlock()
+
+		if t.suppressOnSelect {
+			return
+		}
+
 		t.mu.RLock()
 		defer t.mu.RUnlock()
 		if i < len(t.tracks) && t.onSelect != nil {
@@ -187,6 +197,43 @@ func (t *TrackList) Sort(colID string, ascending bool) {
 	fyne.Do(func() {
 		t.list.Refresh()
 	})
+}
+
+// ScrollBy moves the selection by delta items (negative = up, positive = down).
+// Called from MIDI browse_scroll events.
+func (t *TrackList) ScrollBy(delta int) {
+	t.mu.Lock()
+	newIdx := t.selectedIdx + delta
+	if newIdx < 0 {
+		newIdx = 0
+	}
+	if newIdx >= len(t.tracks) {
+		newIdx = len(t.tracks) - 1
+	}
+	if len(t.tracks) == 0 {
+		t.mu.Unlock()
+		return
+	}
+	t.selectedIdx = newIdx
+	t.mu.Unlock()
+
+	fyne.Do(func() {
+		t.suppressOnSelect = true
+		t.list.Select(widget.ListItemID(newIdx))
+		t.list.ScrollTo(widget.ListItemID(newIdx))
+		t.suppressOnSelect = false
+	})
+}
+
+// SelectedTrack returns the currently highlighted track, or nil if none.
+func (t *TrackList) SelectedTrack() *model.Track {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if t.selectedIdx < 0 || t.selectedIdx >= len(t.tracks) {
+		return nil
+	}
+	track := t.tracks[t.selectedIdx]
+	return &track
 }
 
 func (t *TrackList) CreateRenderer() fyne.WidgetRenderer {
