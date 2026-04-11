@@ -328,6 +328,34 @@ func Compile(cfg ControllerConfig) (*CompiledMapping, error) {
 		}
 	}
 
+	// Process FX controls (separate MIDI channel, DeckID=0 for global FX)
+	for _, ctrl := range cfg.FX.Controls {
+		expanded := expandControl(ctrl)
+		for _, c := range expanded {
+			statusByte := statusForType(c.MIDI.Status, cfg.FX.Channel)
+			key := MIDIKey{
+				Channel: statusByte & 0x0F,
+				Status:  statusByte & 0xF0,
+				Number:  c.MIDI.Number,
+			}
+
+			rm := &ResolvedMapping{
+				Deck:    0, // FX are global, routed by UI target
+				Control: c,
+				Actions: buildActions(c),
+			}
+			cm.InputMap[key] = rm
+
+			if c.HighRes != nil && c.HighRes.Enabled {
+				msbKey := MIDIKey{Channel: statusByte & 0x0F, Status: 0xB0, Number: c.HighRes.MSB}
+				lsbKey := MIDIKey{Channel: statusByte & 0x0F, Status: 0xB0, Number: c.HighRes.LSB}
+				cm.HighResMap[msbKey] = NewHighResState()
+				cm.LSBToMSB[lsbKey] = msbKey
+				cm.InputMap[msbKey] = rm
+			}
+		}
+	}
+
 	log.Printf("compiled %d input mappings, %d highres, %d LED bindings",
 		len(cm.InputMap), len(cm.HighResMap), len(cm.LEDBindings))
 

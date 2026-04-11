@@ -26,6 +26,9 @@ type MasterMixer struct {
 	masterVol  SmoothParam
 	cueVol     SmoothParam // Headphone/cue volume (ready for cue output routing)
 
+	// Beat FX on master output
+	beatFX *BeatFX
+
 	// Pre-allocated buffers — never reallocated
 	buf1 [maxBufSize][2]float32
 	buf2 [maxBufSize][2]float32
@@ -33,7 +36,8 @@ type MasterMixer struct {
 
 func NewMasterMixer(decks []*Deck, sampleRate int) *MasterMixer {
 	m := &MasterMixer{
-		decks: decks,
+		decks:  decks,
+		beatFX: NewBeatFX(sampleRate),
 	}
 	m.crossfader.Init(0.5, sampleRate, 0.005)
 	m.masterVol.Init(0.8, sampleRate, 0.005)
@@ -112,7 +116,15 @@ func (m *MasterMixer) streamChunk(samples [][2]float32) {
 		samples[i][0] = (m.buf1[i][0]*gainA + m.buf2[i][0]*gainB) * mv
 		samples[i][1] = (m.buf1[i][1]*gainA + m.buf2[i][1]*gainB) * mv
 	}
+
+	// Apply master Beat FX in-place
+	m.beatFX.ProcessBuffer(samples, n)
 }
+
+func (m *MasterMixer) SetBeatFXType(t FXType)    { m.beatFX.SetFXType(t) }
+func (m *MasterMixer) SetBeatFXActive(on bool)   { m.beatFX.SetActive(on) }
+func (m *MasterMixer) SetBeatFXWetDry(v float32) { m.beatFX.SetWetDry(v) }
+func (m *MasterMixer) SetBeatFXTime(ms float32)  { m.beatFX.SetTime(ms) }
 
 func crossfadeGains(pos float32) (gainA, gainB float32) {
 	idx := int(pos * float32(crossfadeTableSize-1))

@@ -35,6 +35,9 @@ type Deck struct {
 	// EQ — lock-free (uses atomic coefficient swap internally)
 	eq *ThreeBandEQ
 
+	// Beat FX — lock-free effect processor (echo/flanger/reverb)
+	beatFX *BeatFX
+
 	// Smoothed volume & gain — Set() from any goroutine, Tick() from audio thread
 	volume SmoothParam
 	gain   SmoothParam // Trim/gain knob: 0.0-2.0 multiplier (1.0 = unity)
@@ -64,6 +67,7 @@ func NewDeck(id int, sampleRate int, bus *event.Bus) *Deck {
 		sampleRate: sampleRate,
 		bus:        bus,
 		eq:         NewThreeBandEQ(sampleRate),
+		beatFX:     NewBeatFX(sampleRate),
 		fade:       NewFadeEnvelope(sampleRate, 0.01),
 	}
 	d.volume.Init(0.8, sampleRate, 0.005)
@@ -184,6 +188,11 @@ func (d *Deck) SetEQHigh(v float64) { d.eq.SetHigh(v) }
 func (d *Deck) SetEQMid(v float64)  { d.eq.SetMid(v) }
 func (d *Deck) SetEQLow(v float64)  { d.eq.SetLow(v) }
 
+func (d *Deck) SetBeatFXType(t FXType)    { d.beatFX.SetFXType(t) }
+func (d *Deck) SetBeatFXActive(on bool)   { d.beatFX.SetActive(on) }
+func (d *Deck) SetBeatFXWetDry(v float32) { d.beatFX.SetWetDry(v) }
+func (d *Deck) SetBeatFXTime(ms float32)  { d.beatFX.SetTime(ms) }
+
 func (d *Deck) SetTempo(ratio float64) {
 	if ratio <= 0 {
 		ratio = 0.01
@@ -247,6 +256,7 @@ func (d *Deck) Stream(samples [][2]float32) {
 		d.fpos = 0
 		d.fade = NewFadeEnvelope(d.sampleRate, 0.01)
 		d.eq.Reset()
+		d.beatFX.Reset()
 	}
 
 	// 2. Fade command (Play/Pause)
@@ -332,6 +342,9 @@ func (d *Deck) Stream(samples [][2]float32) {
 
 	// Apply EQ in-place (lock-free biquad filters)
 	d.eq.ProcessBuffer(samples, n)
+
+	// Apply Beat FX in-place (lock-free, zero-alloc)
+	d.beatFX.ProcessBuffer(samples, n)
 
 	// Apply gain and volume in a single pass (biquad filters are linear, so
 	// gain*EQ(x) == EQ(gain*x) — safe to combine post-EQ)

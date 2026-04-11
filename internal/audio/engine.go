@@ -224,6 +224,42 @@ func (e *Engine) subscribeEvents() {
 		}
 		return nil
 	})
+
+	// Beat FX — route to deck or master based on DeckID (0=master, 1/2=deck)
+	e.bus.Subscribe(event.TopicDeck, func(ev event.Event) error {
+		switch ev.Action {
+		case event.ActionFXSelect:
+			fxType := FXType(int32(ev.Value))
+			if ev.DeckID == 0 {
+				e.master.SetBeatFXType(fxType)
+			} else if ev.DeckID >= 1 && ev.DeckID <= NumDecks {
+				e.decks[ev.DeckID-1].SetBeatFXType(fxType)
+			}
+		case event.ActionFXActivate:
+			on := ev.Value > 0.5
+			if ev.DeckID == 0 {
+				e.master.SetBeatFXActive(on)
+			} else if ev.DeckID >= 1 && ev.DeckID <= NumDecks {
+				e.decks[ev.DeckID-1].SetBeatFXActive(on)
+			}
+		case event.ActionFXWetDry:
+			v := float32(ev.Value)
+			if ev.DeckID == 0 {
+				e.master.SetBeatFXWetDry(v)
+			} else if ev.DeckID >= 1 && ev.DeckID <= NumDecks {
+				e.decks[ev.DeckID-1].SetBeatFXWetDry(v)
+			}
+		case event.ActionFXTime:
+			// Map 0.0–1.0 to 50–2000ms range
+			ms := float32(50 + ev.Value*1950)
+			if ev.DeckID == 0 {
+				e.master.SetBeatFXTime(ms)
+			} else if ev.DeckID >= 1 && ev.DeckID <= NumDecks {
+				e.decks[ev.DeckID-1].SetBeatFXTime(ms)
+			}
+		}
+		return nil
+	})
 }
 
 func (e *Engine) positionUpdateLoop() {

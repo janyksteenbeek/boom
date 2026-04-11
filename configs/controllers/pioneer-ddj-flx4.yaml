@@ -208,6 +208,28 @@ global:
       action: cue_volume
       highres: { enabled: true, msb: 13, lsb: 45 }  # 14-bit pair: CC 13 (MSB) + CC 45 (LSB)
 
+# ─── BEAT FX (ch4 = MIDI channel 4) ──────────────────
+fx:
+  channel:
+    note: 0x94   # NoteOn ch4
+    cc: 0xB4     # CC ch4
+
+  controls:
+    - name: fx_level
+      type: fader
+      midi: { status: cc, number: 2 }        # ch4 CC 2 = Beat FX level
+      action: fx_wetdry
+
+    - name: fx_on_off
+      type: button
+      midi: { status: note, number: 71 }      # ch4 Note 71 = Beat FX on/off
+      action: fx_activate
+
+    - name: fx_next
+      type: button
+      midi: { status: note, number: 99 }      # ch4 Note 99 = next Beat FX
+      action: fx_next
+
 # ─── VU METER OUTPUT ──────────────────────────────────
 # Output CC 2 on ch0/ch1, value range 37-123
 led_output:

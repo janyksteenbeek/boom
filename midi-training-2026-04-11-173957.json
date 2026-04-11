@@ -1,0 +1,1988 @@
+{
+  "timestamp": "2026-04-11T17:39:57+02:00",
+  "controls": [
+    {
+      "name": "Effect level",
+      "type": "fader",
+      "status": "cc",
+      "channel": 4,
+      "number": 2,
+      "min_value": 0,
+      "max_value": 127,
+      "sample": [
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 31
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 29
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 27
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 25
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 21
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 19
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 15
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 12
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 10
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 7
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 5
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 3
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 1
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 0
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 0
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 0
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 1
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 1
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 2
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 2
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 2
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 3
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 3
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 4
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 4
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 4
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 5
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 5
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 6
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 6
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 6
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 7
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 7
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 8
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 8
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 8
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 9
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 9
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 10
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 10
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 10
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 11
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 11
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 12
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 12
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 13
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 14
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 14
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 14
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 15
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 15
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 16
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 16
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 16
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 17
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 17
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 18
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 18
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 18
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 19
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 19
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 20
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 20
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 20
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 21
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 22
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 22
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 23
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 23
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 24
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 24
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 24
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 25
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 25
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 26
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 26
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 26
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 27
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 27
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 28
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 28
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 28
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 29
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 29
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 30
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 30
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 31
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 31
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 32
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 32
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 32
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 33
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 33
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 34
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 34
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 34
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 35
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 35
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 36
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 36
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 36
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 37
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 37
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 38
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 38
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 38
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 39
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 39
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 40
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 40
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 40
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 41
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 42
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 42
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 42
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 43
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 43
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 44
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 44
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 44
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 45
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 45
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 46
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 46
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 46
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 47
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 47
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 48
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 48
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 49
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 49
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 49
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 50
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 50
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 51
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 51
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 51
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 52
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 52
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 53
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 53
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 53
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 54
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 54
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 55
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 55
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 55
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 56
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 56
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 57
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 57
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 57
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 58
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 58
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 59
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 59
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 59
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 60
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 60
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 61
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 61
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 61
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 62
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 62
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 63
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 63
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 63
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 64
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 64
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 64
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 65
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 65
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 65
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 66
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 66
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 67
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 67
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 68
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 68
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 69
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 69
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 69
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 70
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 70
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 71
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 71
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 71
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 72
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 72
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 73
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 73
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 73
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 74
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 74
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 75
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 75
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 75
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 76
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 76
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 77
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 77
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 77
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 78
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 78
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 79
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 79
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 79
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 80
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 80
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 81
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 81
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 81
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 82
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 82
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 83
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 83
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 83
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 84
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 84
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 85
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 85
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 85
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 86
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 86
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 87
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 87
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 87
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 88
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 88
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 89
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 89
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 89
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 90
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 90
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 91
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 91
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 91
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 92
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 92
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 93
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 93
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 93
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 94
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 94
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 95
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 95
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 96
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 96
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 97
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 97
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 98
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 98
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 98
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 99
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 99
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 100
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 100
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 100
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 101
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 101
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 102
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 102
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 102
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 103
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 103
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 104
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 104
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 104
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 105
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 105
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 106
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 106
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 106
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 107
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 107
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 108
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 108
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 108
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 109
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 110
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 110
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 110
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 111
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 111
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 112
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 112
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 112
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 113
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 113
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 114
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 114
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 114
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 115
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 115
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 116
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 116
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 116
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 117
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 117
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 118
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 118
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 118
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 119
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 120
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 120
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 121
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 122
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 122
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 123
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 123
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 124
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 124
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 124
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 125
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 125
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 126
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 126
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 126
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 127
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 127
+        },
+        {
+          "channel": 4,
+          "status": "cc",
+          "number": 2,
+          "value": 127
+        }
+      ]
+    },
+    {
+      "name": "On/off button FX",
+      "type": "button",
+      "status": "note",
+      "channel": 4,
+      "number": 71,
+      "min_value": 127,
+      "max_value": 127,
+      "sample": [
+        {
+          "channel": 4,
+          "status": "note",
+          "number": 71,
+          "value": 127
+        },
+        {
+          "channel": 4,
+          "status": "note",
+          "number": 71,
+          "value": 0
+        }
+      ]
+    },
+    {
+      "name": "Next Effect FX button",
+      "type": "button",
+      "status": "note",
+      "channel": 4,
+      "number": 99,
+      "min_value": 127,
+      "max_value": 127,
+      "sample": [
+        {
+          "channel": 4,
+          "status": "note",
+          "number": 99,
+          "value": 127
+        },
+        {
+          "channel": 4,
+          "status": "note",
+          "number": 99,
+          "value": 0
+        }
+      ]
+    }
+  ]
+}

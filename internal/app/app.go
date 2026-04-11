@@ -395,6 +395,64 @@ func registerActions(registry *controller.ActionRegistry, bus *event.Bus) {
 		})
 	})
 
+	// Beat FX actions (DeckID: 0=master, 1=deck1, 2=deck2)
+	registry.Register(event.ActionFXSelect, controller.ActionDescriptor{
+		Name: event.ActionFXSelect, Type: controller.ActionTypeTrigger,
+	}, func(ctx controller.ActionContext) {
+		if !ctx.Pressed {
+			return
+		}
+		bus.Publish(event.Event{
+			Topic:  event.TopicDeck,
+			Action: event.ActionFXSelect,
+			DeckID: ctx.Deck,
+			Value:  ctx.Value,
+		})
+	})
+
+	registry.Register(event.ActionFXActivate, controller.ActionDescriptor{
+		Name: event.ActionFXActivate, Type: controller.ActionTypeTrigger,
+	}, func(ctx controller.ActionContext) {
+		if !ctx.Pressed {
+			return
+		}
+		bus.Publish(event.Event{
+			Topic:  event.TopicDeck,
+			Action: event.ActionFXActivate,
+			DeckID: ctx.Deck,
+			Value:  1.0,
+		})
+	})
+
+	registry.Register(event.ActionFXNext, controller.ActionDescriptor{
+		Name: event.ActionFXNext, Type: controller.ActionTypeTrigger,
+	}, func(ctx controller.ActionContext) {
+		if !ctx.Pressed {
+			return
+		}
+		bus.Publish(event.Event{
+			Topic:  event.TopicDeck,
+			Action: event.ActionFXNext,
+			DeckID: ctx.Deck,
+		})
+	})
+
+	for _, action := range []string{
+		event.ActionFXWetDry, event.ActionFXTime,
+	} {
+		a := action
+		registry.Register(a, controller.ActionDescriptor{
+			Name: a, Type: controller.ActionTypeContinuous,
+		}, func(ctx controller.ActionContext) {
+			bus.Publish(event.Event{
+				Topic:  event.TopicDeck,
+				Action: a,
+				DeckID: ctx.Deck,
+				Value:  ctx.Value,
+			})
+		})
+	}
+
 	// Stub actions for things defined in YAML but not yet implemented
 	stubs := []string{
 		"stutter", "jog_touch", "headphone_cue",

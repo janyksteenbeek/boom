@@ -170,7 +170,7 @@ func (d *DeckView) UpdatePosition(pos float64) {
 }
 
 func (d *DeckView) SetWaveformData(data *audio.WaveformData) {
-	d.waveform.SetPeaks(data.Peaks)
+	d.waveform.SetFrequencyPeaks(data.PeaksLow, data.PeaksMid, data.PeaksHigh)
 }
 
 func (d *DeckView) SetTrack(track *model.Track) {

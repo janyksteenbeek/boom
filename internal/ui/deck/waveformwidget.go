@@ -1,7 +1,6 @@
 package deck
 
 import (
-	"image/color"
 	"math"
 	"sync"
 
@@ -12,14 +11,17 @@ import (
 	boomtheme "github.com/janyksteenbeek/boom/internal/ui/theme"
 )
 
-// WaveformWidget draws audio waveform peaks with grid, playhead, and deck color.
+// WaveformWidget draws a frequency-colored waveform with 3 stacked layers:
+// low (blue), mid (orange), high (white).
 type WaveformWidget struct {
 	widget.BaseWidget
 
-	mu       sync.RWMutex
-	peaks    []float64
-	position float64
-	deckID   int
+	mu        sync.RWMutex
+	peaksLow  []float64
+	peaksMid  []float64
+	peaksHigh []float64
+	position  float64
+	deckID    int
 }
 
 func NewWaveformWidget(deckID int) *WaveformWidget {
@@ -28,9 +30,11 @@ func NewWaveformWidget(deckID int) *WaveformWidget {
 	return w
 }
 
-func (w *WaveformWidget) SetPeaks(peaks []float64) {
+func (w *WaveformWidget) SetFrequencyPeaks(low, mid, high []float64) {
 	w.mu.Lock()
-	w.peaks = peaks
+	w.peaksLow = low
+	w.peaksMid = mid
+	w.peaksHigh = high
 	w.mu.Unlock()
 	fyne.Do(func() {
 		w.Refresh()
@@ -63,33 +67,31 @@ func (w *WaveformWidget) MinSize() fyne.Size {
 // --- Renderer ---
 
 type waveformRenderer struct {
-	widget  *WaveformWidget
-	bg      *canvas.Rectangle
-	topLine *canvas.Line
-	center  *canvas.Line
-	empty   *canvas.Text
-	grid    []*canvas.Line
-	bars    []*canvas.Line
-	head    *canvas.Line
-	size    fyne.Size
+	widget   *WaveformWidget
+	bg       *canvas.Rectangle
+	topLine  *canvas.Line
+	empty    *canvas.Text
+	grid     []*canvas.Line
+	barsLow  []*canvas.Line
+	barsMid  []*canvas.Line
+	barsHigh []*canvas.Line
+	head     *canvas.Line
+	size     fyne.Size
 }
 
 func (r *waveformRenderer) buildObjects() {
 	r.bg = canvas.NewRectangle(boomtheme.ColorWaveformBg)
-	r.bg.CornerRadius = 8
+	r.bg.CornerRadius = 6
 
 	deckID := r.widget.deckID
 	r.topLine = canvas.NewLine(boomtheme.DeckColor(deckID))
-	r.topLine.StrokeWidth = 2
-
-	r.center = canvas.NewLine(boomtheme.ColorWaveformGridMajor)
-	r.center.StrokeWidth = 0.5
+	r.topLine.StrokeWidth = 1.5
 
 	r.empty = canvas.NewText("No Track Loaded", boomtheme.ColorLabelTertiary)
 	r.empty.TextSize = 11
 	r.empty.Alignment = fyne.TextAlignCenter
 
-	// Pre-create grid lines
+	// Subtle grid lines
 	r.grid = make([]*canvas.Line, 16)
 	for i := range r.grid {
 		c := boomtheme.ColorWaveformGrid
@@ -98,6 +100,20 @@ func (r *waveformRenderer) buildObjects() {
 		}
 		r.grid[i] = canvas.NewLine(c)
 		r.grid[i].StrokeWidth = 0.5
+	}
+
+	// Pre-allocate bars for all 3 frequency layers
+	const maxBars = 400
+	r.barsLow = make([]*canvas.Line, maxBars)
+	r.barsMid = make([]*canvas.Line, maxBars)
+	r.barsHigh = make([]*canvas.Line, maxBars)
+	for i := 0; i < maxBars; i++ {
+		r.barsLow[i] = canvas.NewLine(boomtheme.ColorWaveformLow)
+		r.barsLow[i].Hidden = true
+		r.barsMid[i] = canvas.NewLine(boomtheme.ColorWaveformMid)
+		r.barsMid[i].Hidden = true
+		r.barsHigh[i] = canvas.NewLine(boomtheme.ColorWaveformHigh)
+		r.barsHigh[i].Hidden = true
 	}
 
 	r.head = canvas.NewLine(boomtheme.ColorPlayhead)
@@ -117,20 +133,17 @@ func (r *waveformRenderer) layoutObjects(size fyne.Size) {
 	r.bg.Resize(size)
 	r.bg.Move(fyne.NewPos(0, 0))
 
-	r.topLine.Position1 = fyne.NewPos(0, 1)
-	r.topLine.Position2 = fyne.NewPos(size.Width, 1)
+	r.topLine.Position1 = fyne.NewPos(0, 0.5)
+	r.topLine.Position2 = fyne.NewPos(size.Width, 0.5)
 
 	centerY := size.Height / 2
-	r.center.Position1 = fyne.NewPos(0, centerY)
-	r.center.Position2 = fyne.NewPos(size.Width, centerY)
-
 	r.empty.Move(fyne.NewPos(0, centerY-7))
 	r.empty.Resize(fyne.NewSize(size.Width, 14))
 
 	// Position grid lines
 	for i, line := range r.grid {
 		x := float32(i+1) * size.Width / float32(len(r.grid)+1)
-		line.Position1 = fyne.NewPos(x, 4)
+		line.Position1 = fyne.NewPos(x, 2)
 		line.Position2 = fyne.NewPos(x, size.Height-2)
 	}
 }
@@ -141,9 +154,10 @@ func (r *waveformRenderer) MinSize() fyne.Size {
 
 func (r *waveformRenderer) Refresh() {
 	r.widget.mu.RLock()
-	peaks := r.widget.peaks
+	peaksLow := r.widget.peaksLow
+	peaksMid := r.widget.peaksMid
+	peaksHigh := r.widget.peaksHigh
 	position := r.widget.position
-	deckID := r.widget.deckID
 	r.widget.mu.RUnlock()
 
 	size := r.widget.Size()
@@ -152,71 +166,114 @@ func (r *waveformRenderer) Refresh() {
 	}
 	r.layoutObjects(size)
 
-	hasPeaks := len(peaks) > 0
+	peakCount := len(peaksLow)
+	hasPeaks := peakCount > 0 && len(peaksMid) == peakCount && len(peaksHigh) == peakCount
 	r.empty.Hidden = hasPeaks
 	r.head.Hidden = !hasPeaks
 
-	// Rebuild waveform bars
-	deckColor := boomtheme.DeckColor(deckID)
-	deckDim := boomtheme.DeckColorDim(deckID)
 	centerY := size.Height / 2
 
 	if hasPeaks {
 		posX := float32(position) * size.Width
-		barWidth := size.Width / float32(len(peaks))
+		barWidth := size.Width / float32(peakCount)
 
 		step := 1
 		if barWidth < 1.5 {
 			step = int(math.Ceil(float64(1.5 / barWidth)))
 		}
 
-		needed := len(peaks) / step
-		// Grow bars slice if needed
-		for len(r.bars) < needed {
-			l := canvas.NewLine(deckColor)
-			r.bars = append(r.bars, l)
+		needed := peakCount / step
+		if needed > len(r.barsLow) {
+			needed = len(r.barsLow)
 		}
+
+		// Leave padding at top/bottom for breathing room
+		maxH := centerY - 8
 
 		idx := 0
-		for i := 0; i < len(peaks); i += step {
-			peak := peaks[i]
-			for j := 1; j < step && i+j < len(peaks); j++ {
-				if peaks[i+j] > peak {
-					peak = peaks[i+j]
+		for i := 0; i < peakCount; i += step {
+			pLow := peaksLow[i]
+			pMid := peaksMid[i]
+			pHigh := peaksHigh[i]
+			for j := 1; j < step && i+j < peakCount; j++ {
+				if peaksLow[i+j] > pLow {
+					pLow = peaksLow[i+j]
+				}
+				if peaksMid[i+j] > pMid {
+					pMid = peaksMid[i+j]
+				}
+				if peaksHigh[i+j] > pHigh {
+					pHigh = peaksHigh[i+j]
 				}
 			}
 
-			x := float32(i) * (size.Width / float32(len(peaks)))
-			h := float32(peak) * (centerY - 4)
-			if h < 0.5 {
-				h = 0.5
+			x := float32(i) * (size.Width / float32(peakCount))
+			bw := barWidth * float32(step) * 0.75
+			if bw < 1 {
+				bw = 1
 			}
 
-			var c color.Color
-			if x < posX {
-				c = deckDim
-			} else {
-				c = deckColor
-			}
+			hLow := float32(pLow) * maxH
+			hMid := float32(pMid) * maxH
+			hHigh := float32(pHigh) * maxH
 
-			if idx < len(r.bars) {
-				bar := r.bars[idx]
-				bw := barWidth * float32(step) * 0.85
-				if bw < 1 {
-					bw = 1
-				}
-				bar.StrokeColor = c
+			beforePlayhead := x < posX
+			cx := x + bw/2
+
+			if idx < len(r.barsLow) {
+				bar := r.barsLow[idx]
 				bar.StrokeWidth = bw
-				bar.Position1 = fyne.NewPos(x+bw/2, centerY-h)
-				bar.Position2 = fyne.NewPos(x+bw/2, centerY+h)
-				bar.Hidden = false
+				bar.Position1 = fyne.NewPos(cx, centerY-hLow)
+				bar.Position2 = fyne.NewPos(cx, centerY+hLow)
+				if beforePlayhead {
+					bar.StrokeColor = boomtheme.ColorWaveformLowDim
+				} else {
+					bar.StrokeColor = boomtheme.ColorWaveformLow
+				}
+				bar.Hidden = hLow < 0.3
 				bar.Refresh()
-				idx++
 			}
+
+			if idx < len(r.barsMid) {
+				bar := r.barsMid[idx]
+				bar.StrokeWidth = bw
+				bar.Position1 = fyne.NewPos(cx, centerY-hMid)
+				bar.Position2 = fyne.NewPos(cx, centerY+hMid)
+				if beforePlayhead {
+					bar.StrokeColor = boomtheme.ColorWaveformMidDim
+				} else {
+					bar.StrokeColor = boomtheme.ColorWaveformMid
+				}
+				bar.Hidden = hMid < 0.3
+				bar.Refresh()
+			}
+
+			if idx < len(r.barsHigh) {
+				bar := r.barsHigh[idx]
+				bar.StrokeWidth = bw
+				bar.Position1 = fyne.NewPos(cx, centerY-hHigh)
+				bar.Position2 = fyne.NewPos(cx, centerY+hHigh)
+				if beforePlayhead {
+					bar.StrokeColor = boomtheme.ColorWaveformHighDim
+				} else {
+					bar.StrokeColor = boomtheme.ColorWaveformHigh
+				}
+				bar.Hidden = hHigh < 0.3
+				bar.Refresh()
+			}
+
+			idx++
 		}
+
 		// Hide unused bars
-		for ; idx < len(r.bars); idx++ {
-			r.bars[idx].Hidden = true
+		for i := idx; i < len(r.barsLow); i++ {
+			r.barsLow[i].Hidden = true
+		}
+		for i := idx; i < len(r.barsMid); i++ {
+			r.barsMid[i].Hidden = true
+		}
+		for i := idx; i < len(r.barsHigh); i++ {
+			r.barsHigh[i].Hidden = true
 		}
 
 		// Playhead
@@ -224,14 +281,19 @@ func (r *waveformRenderer) Refresh() {
 		r.head.Position2 = fyne.NewPos(posX, size.Height)
 		r.head.Refresh()
 	} else {
-		for _, b := range r.bars {
+		for _, b := range r.barsLow {
+			b.Hidden = true
+		}
+		for _, b := range r.barsMid {
+			b.Hidden = true
+		}
+		for _, b := range r.barsHigh {
 			b.Hidden = true
 		}
 	}
 
 	r.bg.Refresh()
 	r.topLine.Refresh()
-	r.center.Refresh()
 	r.empty.Refresh()
 	for _, g := range r.grid {
 		g.Refresh()
@@ -243,8 +305,15 @@ func (r *waveformRenderer) Objects() []fyne.CanvasObject {
 	for _, g := range r.grid {
 		objs = append(objs, g)
 	}
-	objs = append(objs, r.center, r.empty)
-	for _, b := range r.bars {
+	objs = append(objs, r.empty)
+	// Layer order: low (back) → mid → high (front)
+	for _, b := range r.barsLow {
+		objs = append(objs, b)
+	}
+	for _, b := range r.barsMid {
+		objs = append(objs, b)
+	}
+	for _, b := range r.barsHigh {
 		objs = append(objs, b)
 	}
 	objs = append(objs, r.head)

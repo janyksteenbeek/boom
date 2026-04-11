@@ -8,6 +8,7 @@ type ControllerConfig struct {
 	DeckCh     map[string]ChannelPair    `yaml:"deck_channels"`
 	Decks      DeckMappings              `yaml:"decks"`
 	Global     GlobalMappings            `yaml:"global"`
+	FX         GlobalMappings            `yaml:"fx"`
 	LEDOutput  []LEDOutputDef            `yaml:"led_output"`
 }
 

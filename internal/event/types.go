@@ -44,6 +44,15 @@ const (
 	ActionHeadphoneCue = "headphone_cue"
 )
 
+// Beat FX actions.
+const (
+	ActionFXSelect   = "fx_select"   // Value: FXType (1=echo, 2=flanger, 3=reverb)
+	ActionFXActivate = "fx_activate" // Value: 1.0=on, 0.0=off
+	ActionFXWetDry   = "fx_wetdry"   // Value: 0.0–1.0
+	ActionFXTime     = "fx_time"     // Value: 0.0–1.0 (mapped to ms range)
+	ActionFXNext     = "fx_next"     // Cycle to next effect type
+)
+
 // Engine feedback actions (engine -> UI / LED).
 const (
 	ActionPositionUpdate = "position_update"

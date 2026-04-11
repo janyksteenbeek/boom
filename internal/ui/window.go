@@ -157,6 +157,29 @@ func (w *Window) subscribeEvents() {
 	})
 
 	w.bus.Subscribe(event.TopicDeck, func(ev event.Event) error {
+		// Handle FX events first — these can have DeckID=0 (master/global MIDI)
+		switch ev.Action {
+		case event.ActionFXTime:
+			w.mixer.UpdateFXTime(ev.Value)
+			return nil
+		case event.ActionFXWetDry:
+			if ev.DeckID == 0 {
+				w.mixer.HandleMIDIFXWetDry(ev.Value)
+			} else {
+				w.mixer.UpdateFXWetDry(ev.Value)
+			}
+			return nil
+		case event.ActionFXActivate:
+			if ev.DeckID == 0 {
+				w.mixer.HandleMIDIFXActivate()
+			}
+			return nil
+		case event.ActionFXNext:
+			w.mixer.HandleMIDIFXNext()
+			return nil
+		}
+
+		// Per-deck events require a valid deck
 		d := w.deckForID(ev.DeckID)
 		if d == nil {
 			return nil
