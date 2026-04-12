@@ -3,7 +3,7 @@ Icon = "Icon.png"
 Name = "Boom"
 ID = "dev.janyk.boom"
 Version = "0.1.0"
-Build = 2
+Build = 4
 
 [LinuxAndBSD]
 GenericName = "DJ Application"

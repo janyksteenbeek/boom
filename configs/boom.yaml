@@ -11,7 +11,7 @@ midi_mapping_dir: configs/controllers
 master_volume: 0.8
 headphone_volume: 0.8
 audio_output_device: Core Audio::Dell USB Audio
-cue_output_device: ""
+cue_output_device: Core Audio::DDJ-FLX4
 auto_analyze_on_deck_load: true
 auto_analyze_on_import: false
 bpm_range: ""

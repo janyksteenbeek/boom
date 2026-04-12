@@ -45,12 +45,14 @@ build-all: build build-linux build-linux-arm64 build-windows
 
 package-darwin-arm64:
 	@mkdir -p $(BUILD_DIR)
+	rm -rf Boom.app $(BUILD_DIR)/Boom-darwin-arm64.app
 	GOARCH=arm64 $(FYNE_PKG) -os darwin
 	mv Boom.app $(BUILD_DIR)/Boom-darwin-arm64.app
 	./scripts/bundle-portaudio-darwin.sh $(BUILD_DIR)/Boom-darwin-arm64.app
 
 package-darwin-amd64:
 	@mkdir -p $(BUILD_DIR)
+	rm -rf Boom.app $(BUILD_DIR)/Boom-darwin-amd64.app
 	GOARCH=amd64 $(FYNE_PKG) -os darwin
 	mv Boom.app $(BUILD_DIR)/Boom-darwin-amd64.app
 	./scripts/bundle-portaudio-darwin.sh $(BUILD_DIR)/Boom-darwin-amd64.app
