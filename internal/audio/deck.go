@@ -17,6 +17,17 @@ type pcmBuffer struct {
 	len     int
 }
 
+// WaveformCache is satisfied by library.Store. The audio package defines
+// the interface here so it doesn't need to import library (which would
+// create a cycle: library → model, audio → library → model).
+//
+// GetWaveform returns nil if no valid cache entry exists. The returned
+// WaveformData is owned by the caller.
+type WaveformCache interface {
+	GetWaveform(trackID string, sampleRate int, mtime int64) (*WaveformData, bool)
+	PutWaveform(trackID string, data *WaveformData, mtime int64) error
+}
+
 // Jog wheel decay tunables. Halflives are kept as constants — they affect
 // the *feel* of platter inertia and pitch bend rebound and rarely need user
 // tuning. The per-tick gains are exposed as per-deck atomics so the engine
@@ -102,9 +113,14 @@ type Deck struct {
 
 	track    atomic.Pointer[model.Track]
 	waveform atomic.Pointer[WaveformData]
+
+	// Optional cache for pre-computed waveform peaks. If non-nil, LoadTrack
+	// will consult this before running the (relatively expensive) full
+	// waveform generation pass.
+	wfCache WaveformCache
 }
 
-func NewDeck(id int, sampleRate int, bus *event.Bus) *Deck {
+func NewDeck(id int, sampleRate int, bus *event.Bus, wfCache WaveformCache) *Deck {
 	d := &Deck{
 		id:         id,
 		sampleRate: sampleRate,
@@ -112,6 +128,7 @@ func NewDeck(id int, sampleRate int, bus *event.Bus) *Deck {
 		eq:         NewThreeBandEQ(sampleRate),
 		beatFX:     NewBeatFX(sampleRate),
 		fade:       NewFadeEnvelope(sampleRate, 0.01),
+		wfCache:    wfCache,
 	}
 	d.volume.Init(0.8, sampleRate, 0.005)
 	d.gain.Init(1.0, sampleRate, 0.005)

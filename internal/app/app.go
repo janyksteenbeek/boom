@@ -2,6 +2,7 @@ package app
 
 import (
 	"log"
+	"time"
 
 	"github.com/janyksteenbeek/boom/internal/analysis"
 	"github.com/janyksteenbeek/boom/internal/audio"
@@ -48,7 +49,8 @@ func New() (*App, error) {
 	analyzer := analysis.NewService(bus, store, cfg)
 
 	engine, err := audio.NewEngine(bus, cfg.SampleRate, cfg.BufferSize,
-		cfg.AudioOutputDevice, cfg.CueOutputDevice)
+		cfg.AudioOutputDevice, cfg.CueOutputDevice,
+		newStoreWaveformCache(store))
 	if err != nil {
 		store.Close()
 		return nil, err
@@ -91,6 +93,7 @@ func New() (*App, error) {
 	}
 
 	app.subscribeCuePersistence()
+	app.subscribePlayTracking()
 	app.wireSettingsSave()
 
 	return app, nil
@@ -230,6 +233,51 @@ func (a *App) subscribeCuePersistence() {
 				log.Printf("cue: persist failed for %s: %v", trackID, err)
 			}
 		}()
+		return nil
+	})
+}
+
+// subscribePlayTracking bumps the play counter + last_played the first time
+// a deck enters play state after a track is loaded. "Scrobbled-per-load"
+// semantics: loading a different track resets the flag, so pause/resume of
+// the same track counts as a single play.
+func (a *App) subscribePlayTracking() {
+	var scrobbled [3]string // index by deck ID 1..2; stores last track ID counted
+
+	a.bus.Subscribe(event.TopicEngine, func(ev event.Event) error {
+		switch ev.Action {
+		case event.ActionTrackLoaded:
+			if ev.DeckID < 1 || ev.DeckID >= len(scrobbled) {
+				return nil
+			}
+			scrobbled[ev.DeckID] = "" // reset — new track is eligible to scrobble
+
+		case event.ActionPlayState:
+			if ev.DeckID < 1 || ev.DeckID >= len(scrobbled) {
+				return nil
+			}
+			if ev.Value < 0.5 { // stopped / paused
+				return nil
+			}
+			deck := a.engine.Deck(ev.DeckID)
+			if deck == nil {
+				return nil
+			}
+			track := deck.Track()
+			if track == nil || track.ID == "" {
+				return nil
+			}
+			if scrobbled[ev.DeckID] == track.ID {
+				return nil
+			}
+			scrobbled[ev.DeckID] = track.ID
+			trackID := track.ID
+			go func() {
+				if err := a.store.MarkPlayed(trackID, time.Now()); err != nil {
+					log.Printf("play tracking: %v", err)
+				}
+			}()
+		}
 		return nil
 	})
 }

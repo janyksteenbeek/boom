@@ -1,7 +1,6 @@
 package audio
 
 import (
-	"encoding/json"
 	"math"
 )
 
@@ -81,9 +80,9 @@ func (d *Deck) SamplesPerBeat() float64 {
 }
 
 // NearestBeatBefore snaps a normalized position to the nearest beat at or
-// before it, using Track.BeatGrid (JSON []float64 seconds) when available,
-// falling back to a computed grid from BPM, and finally returning pos
-// unchanged if neither is available.
+// before it, using Track.BeatGrid (seconds) when available, falling back to
+// a computed grid from BPM, and finally returning pos unchanged if neither
+// is available.
 func (d *Deck) NearestBeatBefore(pos float64) float64 {
 	p := d.pcm.Load()
 	if p == nil || p.len == 0 {
@@ -99,19 +98,16 @@ func (d *Deck) NearestBeatBefore(pos float64) float64 {
 	}
 	posSeconds := pos * totalSeconds
 
-	if t.BeatGrid != "" {
-		var beats []float64
-		if err := json.Unmarshal([]byte(t.BeatGrid), &beats); err == nil && len(beats) > 0 {
-			best := beats[0]
-			for _, b := range beats {
-				if b <= posSeconds {
-					best = b
-				} else {
-					break
-				}
+	if beats := t.BeatGrid; len(beats) > 0 {
+		best := beats[0]
+		for _, b := range beats {
+			if b <= posSeconds {
+				best = b
+			} else {
+				break
 			}
-			return best / totalSeconds
 		}
+		return best / totalSeconds
 	}
 	if t.BPM > 0 {
 		beatPeriod := 60.0 / t.BPM
@@ -125,7 +121,7 @@ func (d *Deck) NearestBeatBefore(pos float64) float64 {
 // analysis pass completes. Without this the deck keeps the BPM=0 / empty
 // beatgrid snapshot captured at LoadTrack time, and beat-based features
 // (loops, sync) silently no-op on newly analyzed tracks.
-func (d *Deck) UpdateTrackAnalysis(trackID string, bpm float64, key string, beatGridJSON string) bool {
+func (d *Deck) UpdateTrackAnalysis(trackID string, bpm float64, key string, beatGrid []float64) bool {
 	t := d.track.Load()
 	if t == nil || t.ID != trackID {
 		return false
@@ -133,7 +129,7 @@ func (d *Deck) UpdateTrackAnalysis(trackID string, bpm float64, key string, beat
 	updated := *t
 	updated.BPM = bpm
 	updated.Key = key
-	updated.BeatGrid = beatGridJSON
+	updated.BeatGrid = beatGrid
 	d.track.Store(&updated)
 	return true
 }

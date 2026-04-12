@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"log"
 	"math"
 
 	"github.com/janyksteenbeek/boom/internal/event"
@@ -277,10 +278,33 @@ func (d *Deck) generateWaveform() {
 	if p == nil {
 		return
 	}
+	track := d.track.Load()
+
+	// Try the on-disk cache first — regenerating the FFT-per-chunk peaks
+	// for a full track is seconds of wall time, but reading the blob back
+	// is microseconds.
+	if d.wfCache != nil && track != nil && track.ID != "" {
+		if cached, ok := d.wfCache.GetWaveform(track.ID, d.sampleRate, track.FileMtime); ok && cached != nil {
+			d.waveform.Store(cached)
+			d.bus.PublishAsync(event.Event{
+				Topic: event.TopicEngine, Action: event.ActionWaveformReady,
+				DeckID: d.id, Payload: cached,
+			})
+			return
+		}
+	}
+
 	data := GenerateWaveformFromPCM(p.samples, d.sampleRate)
 	d.waveform.Store(data)
 	d.bus.PublishAsync(event.Event{
 		Topic: event.TopicEngine, Action: event.ActionWaveformReady,
 		DeckID: d.id, Payload: data,
 	})
+
+	// Write back to the cache so the next load of this track is instant.
+	if d.wfCache != nil && track != nil && track.ID != "" {
+		if err := d.wfCache.PutWaveform(track.ID, data, track.FileMtime); err != nil {
+			log.Printf("deck %d: cache waveform: %v", d.id, err)
+		}
+	}
 }

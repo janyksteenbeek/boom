@@ -1,7 +1,6 @@
 package analysis
 
 import (
-	"encoding/json"
 	"log"
 	"sync"
 	"time"
@@ -198,18 +197,14 @@ func (s *Service) processJob(job analysisJob) {
 	// Compute beat grid
 	beatGrid := ComputeBeatGrid(samples, sampleRate, bpm)
 
-	// Serialize beat grid to JSON
-	beatGridJSON := ""
-	if len(beatGrid) > 0 {
-		if data, err := json.Marshal(beatGrid); err == nil {
-			beatGridJSON = string(data)
-		}
-	}
+	// Compute track gain (dB offset vs. target loudness)
+	gain := ComputeTrackGain(samples)
 
-	log.Printf("analysis: '%s' -> BPM=%.2f Key=%s beats=%d", job.track.Title, bpm, key, len(beatGrid))
+	log.Printf("analysis: '%s' -> BPM=%.2f Key=%s gain=%+.1fdB beats=%d",
+		job.track.Title, bpm, key, gain, len(beatGrid))
 
 	// Persist to database
-	if err := s.store.UpdateAnalysis(job.track.ID, bpm, key, beatGridJSON, time.Now()); err != nil {
+	if err := s.store.UpdateAnalysis(job.track.ID, bpm, key, beatGrid, gain, time.Now()); err != nil {
 		log.Printf("analysis: persist %s: %v", job.track.ID, err)
 	}
 
@@ -224,6 +219,7 @@ func (s *Service) processJob(job analysisJob) {
 			TrackID:  job.track.ID,
 			BPM:      bpm,
 			Key:      key,
+			Gain:     gain,
 			BeatGrid: beatGrid,
 			DeckID:   job.deckID,
 		},

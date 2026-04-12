@@ -1,7 +1,6 @@
 package beatgrid
 
 import (
-	"encoding/json"
 	"sync"
 
 	"fyne.io/fyne/v2"
@@ -68,7 +67,7 @@ func (b *BeatGridStrip) SetWaveformData(deckID int, data *audio.WaveformData) {
 	s.SetFrequencyPeaks(data.PeaksLow, data.PeaksMid, data.PeaksHigh)
 }
 
-// SetTrack sets track metadata and parses pre-existing beat grid JSON.
+// SetTrack sets track metadata and forwards any pre-existing beat grid.
 func (b *BeatGridStrip) SetTrack(deckID int, track *model.Track) {
 	b.mu.Lock()
 	if deckID >= 1 && deckID <= 2 {
@@ -78,16 +77,7 @@ func (b *BeatGridStrip) SetTrack(deckID int, track *model.Track) {
 
 	s := b.strip(deckID)
 	s.SetDuration(track.Duration)
-
-	// Parse beat grid from JSON if available
-	if track.BeatGrid != "" {
-		var beats []float64
-		if json.Unmarshal([]byte(track.BeatGrid), &beats) == nil && len(beats) > 0 {
-			s.SetBeatGrid(beats)
-		}
-	} else {
-		s.SetBeatGrid(nil)
-	}
+	s.SetBeatGrid(track.BeatGrid)
 }
 
 // SetBeatGrid sets the beat grid directly (from analysis results).

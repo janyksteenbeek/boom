@@ -70,7 +70,15 @@ type Config struct {
 	AutoCue               bool   `yaml:"auto_cue"`  // Seek to first audio frame on track load (fallback cue)
 	Loop                  LoopSettings `yaml:"loop"`
 	Jog                   JogSettings  `yaml:"jog"`
+
+	// loadedPath is the on-disk path this config was read from (or would be
+	// written to on Save). Not serialized — it's populated by LoadFrom.
+	loadedPath string `yaml:"-"`
 }
+
+// Path returns the on-disk path of the config file this Config was loaded
+// from. Returns an empty string for a Config that was never loaded from disk.
+func (c *Config) Path() string { return c.loadedPath }
 
 // JogSettings holds per-app jog wheel preferences. Sensitivities are unitless
 // gains applied to each MIDI encoder tick. Defaults are tuned for a typical
@@ -118,6 +126,11 @@ func LoadFrom(path string, cfg *Config) (*Config, error) {
 		if saveErr := cfg.SaveTo(path); saveErr != nil {
 			return cfg, fmt.Errorf("persist config defaults: %w", saveErr)
 		}
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		cfg.loadedPath = abs
+	} else {
+		cfg.loadedPath = path
 	}
 	return cfg, nil
 }
@@ -209,8 +222,12 @@ func (c *Config) Validate() bool {
 	return changed
 }
 
-// Save writes the current configuration to the default config file.
+// Save writes the current configuration to the path it was loaded from, or
+// the default config path if this Config was constructed fresh.
 func (c *Config) Save() error {
+	if c.loadedPath != "" {
+		return c.SaveTo(c.loadedPath)
+	}
 	return c.SaveTo(defaultConfigPath)
 }
 

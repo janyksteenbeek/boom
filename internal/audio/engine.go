@@ -106,7 +106,7 @@ func (e *Engine) loopOptions() LoopOptions {
 // device and the mixer produces a parallel cue mix on every tick. The
 // cue stream is non-blocking so it cannot starve the master output if
 // the two devices have slightly different clocks.
-func NewEngine(bus *event.Bus, sampleRate int, bufferSize int, outputDevice, cueDevice string) (*Engine, error) {
+func NewEngine(bus *event.Bus, sampleRate int, bufferSize int, outputDevice, cueDevice string, wfCache WaveformCache) (*Engine, error) {
 	log.Printf("audio: initializing engine at %d Hz, buffer %d", sampleRate, bufferSize)
 
 	backend, err := output.New()
@@ -123,7 +123,7 @@ func NewEngine(bus *event.Bus, sampleRate int, bufferSize int, outputDevice, cue
 
 	deckSlice := make([]*Deck, NumDecks)
 	for i := range e.decks {
-		e.decks[i] = NewDeck(i+1, sampleRate, bus)
+		e.decks[i] = NewDeck(i+1, sampleRate, bus, wfCache)
 		deckSlice[i] = e.decks[i]
 	}
 	e.master = NewMasterMixer(deckSlice, sampleRate)

@@ -1,7 +1,6 @@
 package audio
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"math"
@@ -347,14 +346,8 @@ func (e *Engine) handleAnalysisEvent(ev event.Event) error {
 	if !ok || res == nil {
 		return nil
 	}
-	beatGridJSON := ""
-	if len(res.BeatGrid) > 0 {
-		if data, mErr := json.Marshal(res.BeatGrid); mErr == nil {
-			beatGridJSON = string(data)
-		}
-	}
 	for _, d := range e.decks {
-		if d.UpdateTrackAnalysis(res.TrackID, res.BPM, res.Key, beatGridJSON) {
+		if d.UpdateTrackAnalysis(res.TrackID, res.BPM, res.Key, res.BeatGrid) {
 			log.Printf("engine: deck %d track analysis applied (bpm=%.2f)", d.ID(), res.BPM)
 		}
 	}

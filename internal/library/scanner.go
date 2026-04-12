@@ -52,6 +52,18 @@ func (s *Scanner) ScanDir(dir string) (int, error) {
 			return nil
 		}
 
+		// Fast path: compare file mtime against what we already have.
+		// Tag reads hit disk (~ms each); skipping unchanged files makes
+		// rescans of large libraries near-instant.
+		info, statErr := d.Info()
+		if statErr == nil {
+			existing, mErr := s.store.MtimeByPath(path)
+			if mErr == nil && existing != 0 && existing == info.ModTime().Unix() {
+				count++
+				return nil
+			}
+		}
+
 		track, err := ReadMetadata(path)
 		if err != nil {
 			log.Printf("skip %s: %v", path, err)

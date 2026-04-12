@@ -27,13 +27,14 @@ func ReadMetadata(path string) (*model.Track, error) {
 	}
 
 	t := &model.Track{
-		ID:       generateID(path),
-		Path:     path,
-		Format:   strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."),
-		Size:     info.Size(),
-		Source:   "local",
-		AddedAt:  time.Now(),
-		CuePoint: -1, // unset by default
+		ID:        generateID(path),
+		Path:      path,
+		Format:    strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."),
+		Size:      info.Size(),
+		FileMtime: info.ModTime().Unix(),
+		Source:    "local",
+		AddedAt:   time.Now(),
+		CuePoint:  -1, // unset by default
 	}
 
 	meta, err := tag.ReadFrom(f)

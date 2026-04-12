@@ -117,6 +117,7 @@ type AnalysisResult struct {
 	TrackID  string
 	BPM      float64
 	Key      string
+	Gain     float64 // dB offset vs. target loudness (0 = unset/neutral)
 	BeatGrid []float64
 	DeckID   int // 0=batch, 1/2=deck
 }
