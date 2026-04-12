@@ -51,7 +51,8 @@ func New() (*App, error) {
 	// Analysis service
 	analyzer := analysis.NewService(bus, store, cfg)
 
-	engine, err := audio.NewEngine(bus, cfg.SampleRate, cfg.BufferSize, cfg.AudioOutputDevice)
+	engine, err := audio.NewEngine(bus, cfg.SampleRate, cfg.BufferSize,
+		cfg.AudioOutputDevice, cfg.CueOutputDevice)
 	if err != nil {
 		store.Close()
 		return nil, err

@@ -76,30 +76,50 @@ func (m *MasterMixer) SetCueVolume(v float64) {
 }
 
 // Stream mixes all deck outputs with per-sample smoothed crossfade and master volume.
-// Called from audio callback thread only.
+// Called from the master output's producer goroutine. Equivalent to
+// StreamPair(samples, nil) — kept as a thin alias for callers that don't
+// care about cue.
 func (m *MasterMixer) Stream(samples [][2]float32) {
-	n := len(samples)
+	m.StreamPair(samples, nil)
+}
 
-	// Process in chunks if request exceeds pre-allocated buffer size
+// StreamPair fills the master buffer and (optionally) a cue buffer in a
+// single pass. The cue tap is pre-crossfade and pre-master-fader: every
+// deck is summed straight in, then scaled by the smoothed cue volume.
+// That matches how a hardware DJ mixer's headphone bus works when both
+// deck PFL buttons are engaged — we don't have a per-deck PFL toggle yet,
+// so for now everything is in the cue mix.
+//
+// Both buffers must be the same length when cue is non-nil. Pass nil for
+// cue to skip the cue work entirely (and avoid touching the cue volume
+// smoother).
+func (m *MasterMixer) StreamPair(master, cue [][2]float32) {
+	n := len(master)
+	if cue != nil && len(cue) < n {
+		n = len(cue)
+	}
+
 	for offset := 0; offset < n; offset += maxBufSize {
 		end := offset + maxBufSize
 		if end > n {
 			end = n
 		}
-		m.streamChunk(samples[offset:end])
+		var cueChunk [][2]float32
+		if cue != nil {
+			cueChunk = cue[offset:end]
+		}
+		m.streamChunk(master[offset:end], cueChunk)
 	}
 }
 
-func (m *MasterMixer) streamChunk(samples [][2]float32) {
-	n := len(samples)
+func (m *MasterMixer) streamChunk(master, cue [][2]float32) {
+	n := len(master)
 
-	// Clear fixed buffers
 	for i := 0; i < n; i++ {
 		m.buf1[i] = [2]float32{}
 		m.buf2[i] = [2]float32{}
 	}
 
-	// Read from decks into pre-allocated buffers
 	if len(m.decks) > 0 {
 		m.decks[0].Stream(m.buf1[:n])
 	}
@@ -107,18 +127,25 @@ func (m *MasterMixer) streamChunk(samples [][2]float32) {
 		m.decks[1].Stream(m.buf2[:n])
 	}
 
-	// Per-sample smoothed mixing — eliminates clicks on crossfader/volume changes
 	for i := 0; i < n; i++ {
 		cf := m.crossfader.Tick()
 		mv := m.masterVol.Tick()
 		gainA, gainB := crossfadeGains(cf)
 
-		samples[i][0] = (m.buf1[i][0]*gainA + m.buf2[i][0]*gainB) * mv
-		samples[i][1] = (m.buf1[i][1]*gainA + m.buf2[i][1]*gainB) * mv
+		master[i][0] = (m.buf1[i][0]*gainA + m.buf2[i][0]*gainB) * mv
+		master[i][1] = (m.buf1[i][1]*gainA + m.buf2[i][1]*gainB) * mv
+
+		if cue != nil {
+			cv := m.cueVol.Tick()
+			cue[i][0] = (m.buf1[i][0] + m.buf2[i][0]) * cv
+			cue[i][1] = (m.buf1[i][1] + m.buf2[i][1]) * cv
+		}
 	}
 
-	// Apply master Beat FX in-place
-	m.beatFX.ProcessBuffer(samples, n)
+	// Master beat FX is post-crossfade only — the cue bus stays dry so
+	// the DJ hears the source signal, not whatever they're applying to
+	// the room.
+	m.beatFX.ProcessBuffer(master, n)
 }
 
 func (m *MasterMixer) SetBeatFXType(t FXType)    { m.beatFX.SetFXType(t) }

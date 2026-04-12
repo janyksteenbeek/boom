@@ -1,0 +1,104 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: '1.26.1'
+
+jobs:
+  # ─── Test on the native host ─────────────────────────────────────────
+  # Cgo cross-compile is brittle, so we run unit tests once on Linux and
+  # rely on the matrix below for the actual cross-platform builds.
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Install audio dev headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev libasound2-dev libxxf86vm-dev
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...
+
+  # ─── Cross-platform builds ───────────────────────────────────────────
+  # Each runner builds natively for its own OS — no cross-toolchains.
+  # macOS gets two passes for amd64 and arm64.
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-amd64
+            runs-on: ubuntu-24.04
+            goos: linux
+            goarch: amd64
+            artifact: boom-linux-amd64
+          - name: linux-arm64
+            runs-on: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+            artifact: boom-linux-arm64
+          - name: darwin-amd64
+            runs-on: macos-13          # last Intel runner
+            goos: darwin
+            goarch: amd64
+            artifact: boom-darwin-amd64
+          - name: darwin-arm64
+            runs-on: macos-14          # Apple silicon
+            goos: darwin
+            goarch: arm64
+            artifact: boom-darwin-arm64
+          - name: windows-amd64
+            runs-on: windows-2022
+            goos: windows
+            goarch: amd64
+            artifact: boom-windows-amd64.exe
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      # Fyne / GLFW need OpenGL + X11 + ALSA headers on Linux. miniaudio
+      # dlopens libasound at runtime, but the Linux runner needs the
+      # build-time headers anyway because we link against libasound's
+      # dynamic loader interface.
+      - name: Install Linux build deps
+        if: matrix.goos == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev xorg-dev libasound2-dev libxxf86vm-dev
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '1'
+        shell: bash
+        run: |
+          mkdir -p build
+          go build -ldflags "-s -w" -o build/${{ matrix.artifact }} ./cmd/boom
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: build/${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 14

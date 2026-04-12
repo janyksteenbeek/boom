@@ -44,20 +44,45 @@ func ShowSettingsDialog(window fyne.Window, cfg *config.Config, onSave func(*con
 	)
 
 	// --- Audio Output ---
-	devices := audio.ListAudioDevices()
+	// We display device names in the dropdown but persist the opaque
+	// device ID — names can collide and aren't stable across reboots.
+	devices := audio.ListOutputDevices()
 
-	outputSelect := widget.NewSelect(devices, nil)
-	if cfg.AudioOutputDevice == "" {
-		outputSelect.SetSelected("System Default")
-	} else {
-		outputSelect.SetSelected(cfg.AudioOutputDevice)
+	masterLabels := make([]string, len(devices))
+	idByLabel := make(map[string]string, len(devices))
+	labelByID := make(map[string]string, len(devices))
+	for i, d := range devices {
+		label := d.Name
+		// Disambiguate duplicate names by appending a short ID prefix.
+		if _, exists := idByLabel[label]; exists {
+			suffix := d.ID
+			if len(suffix) > 6 {
+				suffix = suffix[:6]
+			}
+			label = fmt.Sprintf("%s (%s)", d.Name, suffix)
+		}
+		masterLabels[i] = label
+		idByLabel[label] = d.ID
+		if _, ok := labelByID[d.ID]; !ok {
+			labelByID[d.ID] = label
+		}
 	}
 
-	cueSelect := widget.NewSelect(append([]string{"Disabled"}, devices...), nil)
+	outputSelect := widget.NewSelect(masterLabels, nil)
+	if label, ok := labelByID[cfg.AudioOutputDevice]; ok {
+		outputSelect.SetSelected(label)
+	} else {
+		outputSelect.SetSelected(masterLabels[0])
+	}
+
+	cueLabels := append([]string{"Disabled"}, masterLabels...)
+	cueSelect := widget.NewSelect(cueLabels, nil)
 	if cfg.CueOutputDevice == "" {
 		cueSelect.SetSelected("Disabled")
+	} else if label, ok := labelByID[cfg.CueOutputDevice]; ok {
+		cueSelect.SetSelected(label)
 	} else {
-		cueSelect.SetSelected(cfg.CueOutputDevice)
+		cueSelect.SetSelected("Disabled")
 	}
 
 	audioSection := container.NewVBox(
@@ -142,17 +167,13 @@ func ShowSettingsDialog(window fyne.Window, cfg *config.Config, onSave func(*con
 		}
 		cfg.MusicDirs = cleanDirs
 
-		// Audio output
-		if outputSelect.Selected == "System Default" {
-			cfg.AudioOutputDevice = ""
-		} else {
-			cfg.AudioOutputDevice = outputSelect.Selected
-		}
+		// Audio output — persist the opaque Device.ID, not the label.
+		cfg.AudioOutputDevice = idByLabel[outputSelect.Selected]
 
 		if cueSelect.Selected == "Disabled" {
 			cfg.CueOutputDevice = ""
 		} else {
-			cfg.CueOutputDevice = cueSelect.Selected
+			cfg.CueOutputDevice = idByLabel[cueSelect.Selected]
 		}
 
 		// Performance

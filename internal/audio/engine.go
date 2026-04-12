@@ -3,12 +3,11 @@ package audio
 import (
 	"fmt"
 	"log"
+	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
-	"github.com/ebitengine/oto/v3"
-
+	"github.com/janyksteenbeek/boom/internal/audio/output"
 	"github.com/janyksteenbeek/boom/internal/event"
 	"github.com/janyksteenbeek/boom/pkg/model"
 )
@@ -16,6 +15,12 @@ import (
 const (
 	NumDecks               = 2
 	positionUpdateInterval = 16 * time.Millisecond
+
+	// feederBlockFrames is the number of frames the engine generates per
+	// mixer tick. Small enough that the producer comfortably stays ahead
+	// of any sane hardware buffer (default 256–2048 frames), big enough
+	// that the per-tick smoothing/EQ overhead doesn't dominate.
+	feederBlockFrames = 512
 )
 
 type Engine struct {
@@ -23,59 +28,91 @@ type Engine struct {
 	decks      [NumDecks]*Deck
 	master     *MasterMixer
 	sampleRate int
-	stopCh     chan struct{}
+
+	stopOnce sync.Once
+	stopCh   chan struct{}
+	feederWG sync.WaitGroup
 
 	autoCue atomic.Bool // auto-cue on load (fallback cue = first audio frame)
 
-	otoCtx *oto.Context
-	player *oto.Player
+	backend      output.Backend
+	masterStream output.Stream
+	cueStream    output.Stream // nil when no cue device configured
 }
 
 // SetAutoCue toggles auto-cue-on-load. When enabled, tracks without a saved
 // manual cue seek to the first audible sample rather than sample 0.
 func (e *Engine) SetAutoCue(v bool) { e.autoCue.Store(v) }
 
-// audioReader implements io.Reader and feeds mixed audio to the oto player.
-// All processing is allocation-free: pre-decoded PCM, pre-allocated buffers.
-type audioReader struct {
-	engine *Engine
-	buf    [][2]float32
+// openWithFallback tries to open a named device, then resolves the
+// configured ID against the current device list (so a stale config
+// holding the old name-based format still finds the right device), and
+// finally falls back to the system default. The two intermediate steps
+// are about config compatibility: pre-miniaudio Boom persisted device
+// names; the new config persists hex-encoded ma_device_id blobs. Either
+// representation should keep playback working.
+func openWithFallback(backend output.Backend, label, configID string, base output.StreamConfig) (output.Stream, error) {
+	cfg := base
+	cfg.DeviceID = configID
+	if stream, err := backend.OpenStream(cfg); err == nil {
+		return stream, nil
+	} else if configID == "" {
+		// No configured ID and we still failed — surface the original error.
+		return nil, err
+	} else {
+		log.Printf("audio: %s device %q not opened directly (%v); resolving by name", label, configID, err)
+	}
+
+	// Maybe the config holds a legacy device name. Match it against the
+	// current device list and retry with the canonical ID.
+	if devs, derr := backend.ListDevices(); derr == nil {
+		for _, d := range devs {
+			if d.Name == configID {
+				cfg.DeviceID = d.ID
+				if stream, err := backend.OpenStream(cfg); err == nil {
+					log.Printf("audio: %s device matched %q by name → %s",
+						label, configID, shortID(d.ID))
+					return stream, nil
+				}
+			}
+		}
+	}
+
+	// Last resort: open the system default and warn loudly so the user
+	// notices their selection didn't take effect.
+	log.Printf("audio: %s device %q unavailable, falling back to system default", label, configID)
+	cfg.DeviceID = ""
+	return backend.OpenStream(cfg)
 }
 
-func (r *audioReader) Read(p []byte) (int, error) {
-	frames := len(p) / 8 // 8 bytes per stereo float32 frame
-	if frames == 0 {
-		return 0, nil
+func shortID(id string) string {
+	if len(id) <= 12 {
+		return id
 	}
-	if frames > len(r.buf) {
-		frames = len(r.buf)
-	}
-
-	buf := r.buf[:frames]
-	for i := range buf {
-		buf[i] = [2]float32{}
-	}
-
-	r.engine.master.Stream(buf)
-
-	for i := range buf {
-		buf[i][0] = clampF32(buf[i][0])
-		buf[i][1] = clampF32(buf[i][1])
-	}
-
-	n := frames * 8
-	src := unsafe.Slice((*byte)(unsafe.Pointer(&buf[0])), n)
-	copy(p[:n], src)
-	return n, nil
+	return id[:12] + "…"
 }
 
-func NewEngine(bus *event.Bus, sampleRate int, bufferSize int, outputDevice string) (*Engine, error) {
+// NewEngine builds the audio engine and opens the output streams.
+//
+// outputDevice is the master/main output device (Device.ID, "" = default).
+// cueDevice is the optional headphone/cue device (Device.ID, "" = none).
+// When cueDevice is non-empty, a second output.Stream is opened on that
+// device and the mixer produces a parallel cue mix on every tick. The
+// cue stream is non-blocking so it cannot starve the master output if
+// the two devices have slightly different clocks.
+func NewEngine(bus *event.Bus, sampleRate int, bufferSize int, outputDevice, cueDevice string) (*Engine, error) {
 	log.Printf("audio: initializing engine at %d Hz, buffer %d", sampleRate, bufferSize)
+
+	backend, err := output.New()
+	if err != nil {
+		return nil, fmt.Errorf("audio backend: %w", err)
+	}
 
 	e := &Engine{
 		bus:        bus,
 		sampleRate: sampleRate,
 		stopCh:     make(chan struct{}),
+		backend:    backend,
 	}
 
 	deckSlice := make([]*Deck, NumDecks)
@@ -85,35 +122,95 @@ func NewEngine(bus *event.Bus, sampleRate int, bufferSize int, outputDevice stri
 	}
 	e.master = NewMasterMixer(deckSlice, sampleRate)
 
-	// Initialize oto audio context
-	bufDuration := time.Duration(float64(bufferSize) / float64(sampleRate) * float64(time.Second))
-	otoCtx, ready, err := oto.NewContext(&oto.NewContextOptions{
+	masterStream, err := openWithFallback(backend, "master", outputDevice, output.StreamConfig{
 		SampleRate:   sampleRate,
-		ChannelCount: 2,
-		Format:       oto.FormatFloat32LE,
-		BufferSize:   bufDuration,
+		BufferFrames: bufferSize,
+		NumChannels:  2,
+		BlockOnFull:  true, // master paces the producer
 	})
 	if err != nil {
-		return nil, fmt.Errorf("oto init: %w", err)
+		_ = backend.Close()
+		return nil, fmt.Errorf("open master output: %w", err)
 	}
-	<-ready
-	e.otoCtx = otoCtx
+	e.masterStream = masterStream
+	log.Printf("audio: master stream opened (%d Hz, %d ch, buf %d frames)",
+		masterStream.SampleRate(), masterStream.NumChannels(), bufferSize)
 
-	reader := &audioReader{
-		engine: e,
-		buf:    make([][2]float32, 8192),
+	if cueDevice != "" {
+		cueStream, err := openWithFallback(backend, "cue", cueDevice, output.StreamConfig{
+			SampleRate:   sampleRate,
+			BufferFrames: bufferSize,
+			NumChannels:  2,
+			BlockOnFull:  false, // cue is best-effort; never blocks master
+		})
+		if err != nil {
+			log.Printf("audio: cue output unavailable, continuing without it: %v", err)
+		} else {
+			e.cueStream = cueStream
+			log.Printf("audio: cue stream opened (%d Hz, %d ch)",
+				cueStream.SampleRate(), cueStream.NumChannels())
+		}
 	}
 
-	player := otoCtx.NewPlayer(reader)
-	player.SetBufferSize(bufferSize * 8) // bytes: frames × 2ch × 4 bytes
-	player.Play()
-	e.player = player
-
-	log.Printf("audio: device started (oto)")
+	e.feederWG.Add(1)
+	go e.feederLoop()
 
 	e.subscribeEvents()
 	go e.positionUpdateLoop()
 	return e, nil
+}
+
+// feederLoop is the engine's producer goroutine. It generates audio in
+// fixed-size blocks, runs the mixer once per block to fill master and
+// (optionally) cue buffers, and writes the result to the output streams.
+// The master stream is opened with BlockOnFull=true, so its Write call
+// is the natural pacer — when the master ring is full the goroutine
+// sleeps inside output.Write until the audio thread drains it.
+func (e *Engine) feederLoop() {
+	defer e.feederWG.Done()
+
+	const block = feederBlockFrames
+	masterBuf := make([][2]float32, block)
+	cueBuf := make([][2]float32, block)
+	flatMaster := make([]float32, block*2)
+	flatCue := make([]float32, block*2)
+
+	for {
+		select {
+		case <-e.stopCh:
+			return
+		default:
+		}
+
+		// StreamPair overwrites both buffers — no pre-clear needed.
+		if e.cueStream != nil {
+			e.master.StreamPair(masterBuf, cueBuf)
+		} else {
+			e.master.Stream(masterBuf)
+		}
+
+		for i, fr := range masterBuf {
+			flatMaster[i*2] = clampF32(fr[0])
+			flatMaster[i*2+1] = clampF32(fr[1])
+		}
+		if _, err := e.masterStream.Write(flatMaster); err != nil {
+			if err == output.ErrStreamClosed {
+				return
+			}
+			log.Printf("audio: master write: %v", err)
+			return
+		}
+
+		if e.cueStream != nil {
+			for i, fr := range cueBuf {
+				flatCue[i*2] = clampF32(fr[0])
+				flatCue[i*2+1] = clampF32(fr[1])
+			}
+			if _, err := e.cueStream.Write(flatCue); err != nil && err != output.ErrStreamClosed {
+				log.Printf("audio: cue write: %v", err)
+			}
+		}
+	}
 }
 
 func (e *Engine) Deck(id int) *Deck {
@@ -124,11 +221,21 @@ func (e *Engine) Deck(id int) *Deck {
 }
 
 func (e *Engine) Stop() {
-	close(e.stopCh)
-	if e.player != nil {
-		e.player.Pause()
-		e.player.Close()
-	}
+	e.stopOnce.Do(func() {
+		close(e.stopCh)
+		if e.masterStream != nil {
+			_ = e.masterStream.Close()
+		}
+		if e.cueStream != nil {
+			_ = e.cueStream.Close()
+		}
+		// Wait for the feeder to exit before tearing down the backend so
+		// it can't try to Write into a freed C stream.
+		e.feederWG.Wait()
+		if e.backend != nil {
+			_ = e.backend.Close()
+		}
+	})
 }
 
 func (e *Engine) subscribeEvents() {

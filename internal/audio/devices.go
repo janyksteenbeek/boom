@@ -2,43 +2,54 @@ package audio
 
 import (
 	"log"
+	"sync"
 
-	"github.com/gen2brain/malgo"
+	"github.com/janyksteenbeek/boom/internal/audio/output"
 )
 
-// ListAudioDevices returns available audio output device names.
-// "System Default" is always the first entry.
-func ListAudioDevices() []string {
-	fallback := []string{"System Default"}
+// devicesBackend is a process-wide backend used solely for enumeration.
+// We hold one reference for the life of the app: miniaudio's context
+// is heavyweight to spin up, and the settings dialog opens it on every
+// invocation otherwise.
+var (
+	devicesBackend     output.Backend
+	devicesBackendOnce sync.Once
+	devicesBackendErr  error
+)
 
-	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
-	if err != nil {
-		log.Printf("audio: failed to init malgo context for device listing: %v", err)
-		return fallback
-	}
-	defer func() {
-		_ = ctx.Uninit()
-		ctx.Free()
-	}()
-
-	devices, err := ctx.Devices(malgo.Playback)
-	if err != nil {
-		log.Printf("audio: failed to list playback devices: %v", err)
-		return fallback
-	}
-
-	names := fallback
-	seen := map[string]struct{}{"System Default": {}}
-	for _, d := range devices {
-		name := d.Name()
-		if name == "" {
-			continue
+func ensureDevicesBackend() (output.Backend, error) {
+	devicesBackendOnce.Do(func() {
+		devicesBackend, devicesBackendErr = output.New()
+		if devicesBackendErr != nil {
+			log.Printf("audio: device backend init failed: %v", devicesBackendErr)
 		}
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
-		names = append(names, name)
+	})
+	return devicesBackend, devicesBackendErr
+}
+
+// ListOutputDevices returns the available playback devices, with the
+// system default first. The returned slice is always non-nil; on error
+// it contains a single sentinel "System Default" entry with empty ID so
+// the UI can still render something useful.
+func ListOutputDevices() []output.Device {
+	defaultEntry := output.Device{ID: "", Name: "System Default", IsDefault: true, NumChannels: 2}
+	b, err := ensureDevicesBackend()
+	if err != nil {
+		return []output.Device{defaultEntry}
 	}
-	return names
+	devs, err := b.ListDevices()
+	if err != nil {
+		log.Printf("audio: list devices failed: %v", err)
+		return []output.Device{defaultEntry}
+	}
+	if len(devs) == 0 {
+		return []output.Device{defaultEntry}
+	}
+	// Prepend a "System Default" entry so the UI can offer the no-op
+	// choice without the user having to know which device the OS thinks
+	// is currently default.
+	out := make([]output.Device, 0, len(devs)+1)
+	out = append(out, defaultEntry)
+	out = append(out, devs...)
+	return out
 }
