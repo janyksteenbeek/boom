@@ -99,6 +99,9 @@ func ShowSettingsDialog(window fyne.Window, cfg *config.Config, onSave func(*con
 		bpmRangeSelect.SetSelected(cfg.BPMRange)
 	}
 
+	autoCueCheck := widget.NewCheck("Auto Cue: seek to first audio on load", nil)
+	autoCueCheck.SetChecked(cfg.AutoCue)
+
 	analysisSection := container.NewVBox(
 		widget.NewLabel("Auto-analyze"),
 		autoAnalyzeOnLoad,
@@ -106,6 +109,9 @@ func ShowSettingsDialog(window fyne.Window, cfg *config.Config, onSave func(*con
 		widget.NewSeparator(),
 		widget.NewLabel("BPM Range"),
 		bpmRangeSelect,
+		widget.NewSeparator(),
+		widget.NewLabel("Cue"),
+		autoCueCheck,
 	)
 
 	// --- Tabs ---
@@ -161,6 +167,7 @@ func ShowSettingsDialog(window fyne.Window, cfg *config.Config, onSave func(*con
 		cfg.AutoAnalyzeOnDeckLoad = autoAnalyzeOnLoad.Checked
 		cfg.AutoAnalyzeOnImport = autoAnalyzeOnImport.Checked
 		cfg.BPMRange = bpmRangeSelect.Selected
+		cfg.AutoCue = autoCueCheck.Checked
 
 		// Save to disk
 		if err := cfg.Save(); err != nil {

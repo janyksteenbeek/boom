@@ -56,6 +56,7 @@ func New() (*App, error) {
 		store.Close()
 		return nil, err
 	}
+	engine.SetAutoCue(cfg.AutoCue)
 
 	midiMgr := boomidi.NewManager(bus)
 
@@ -162,6 +163,7 @@ func New() (*App, error) {
 	// Wire settings save: rescan library when music dirs change
 	window.OnSettingsSave(func(updatedCfg *config.Config) {
 		log.Printf("settings saved, rescanning music dirs: %v", updatedCfg.MusicDirs)
+		engine.SetAutoCue(updatedCfg.AutoCue)
 		go func() {
 			app.library.ScanDirs(updatedCfg.MusicDirs)
 			tracks, err := app.library.AllTracks(0, 500)
@@ -236,23 +238,20 @@ func (a *App) shutdown() {
 	a.library.Close()
 }
 
-// ledFeedbackLoop drives the per-deck PLAY and CUE LEDs. Both can be in a
-// blinking state, so we poll deck state every 50 ms and recompute. MIDI is
-// only sent on edge transitions to keep bus traffic minimal.
+// ledFeedbackLoop drives the per-deck PLAY and CUE LEDs in Pioneer-style
+// state mapping with software blink:
 //
-// PLAY LED:
+//	no track             → both OFF
+//	playing              → PLAY solid, CUE OFF
+//	cue_preview          → PLAY OFF,   CUE solid
+//	paused at eff. cue   → PLAY blink, CUE solid
+//	paused away from cue → PLAY blink, CUE blink
 //
-//	off       — no track loaded
-//	solid     — playing
-//	blinking  — paused (ready to play)
-//
-// CUE LED:
-//
-//	off       — playing, or no track / no cue point
-//	solid     — paused at the cue point, or in cue-hold preview
-//
-// Blinking is software-driven at ~500 ms (1 Hz) because the DDJ-FLX4 buttons
-// have no native firmware blink mode.
+// PLAY blinks at 1 Hz (~500 ms period) when the deck is paused — this is the
+// "ready to play" indicator. CUE blinks at 2 Hz (~250 ms period) when paused
+// away from the cue — a faster "press to (re)cue here" invitation that's
+// visually distinct from PLAY. The loop polls at 50 ms and only sends MIDI on
+// edge transitions to keep controller traffic low.
 func (a *App) ledFeedbackLoop() {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
@@ -265,7 +264,9 @@ func (a *App) ledFeedbackLoop() {
 		case <-a.stopCh:
 			return
 		case <-ticker.C:
-			phaseOn := (time.Now().UnixMilli()/500)%2 == 0
+			ms := time.Now().UnixMilli()
+			playBlink := (ms/500)%2 == 0 // 1 Hz
+			cueBlink := (ms/250)%2 == 0  // 2 Hz
 			for i := 0; i < audio.NumDecks; i++ {
 				deck := a.engine.Deck(i + 1)
 				if deck == nil {
@@ -274,16 +275,20 @@ func (a *App) ledFeedbackLoop() {
 				hasTrack := deck.Track() != nil
 				playing := deck.IsPlaying()
 				preview := deck.CuePreview()
+				atCue := deck.AtEffectiveCue()
 
 				var playOn, cueOn bool
 				switch {
 				case !hasTrack:
 					playOn = false
-				case playing && !preview:
+				case preview:
+					playOn = false
+				case playing:
 					playOn = true
 				default:
-					playOn = phaseOn // paused (or preview) → blink
+					playOn = playBlink
 				}
+
 				switch {
 				case !hasTrack:
 					cueOn = false
@@ -291,10 +296,10 @@ func (a *App) ledFeedbackLoop() {
 					cueOn = true
 				case playing:
 					cueOn = false
-				case deck.AtCue():
+				case atCue:
 					cueOn = true
 				default:
-					cueOn = false
+					cueOn = cueBlink
 				}
 
 				if !initialized[i] || playOn != lastPlay[i] {
@@ -385,6 +390,20 @@ func registerActions(registry *controller.ActionRegistry, bus *event.Bus) {
 		bus.Publish(event.Event{
 			Topic:  event.TopicDeck,
 			Action: event.ActionCueDelete,
+			DeckID: ctx.Deck,
+		})
+	})
+
+	// SHIFT + CUE: jump to track start, paused. Press-only.
+	registry.Register(event.ActionCueGoStart, controller.ActionDescriptor{
+		Name: event.ActionCueGoStart, Type: controller.ActionTypeTrigger,
+	}, func(ctx controller.ActionContext) {
+		if !ctx.Pressed {
+			return
+		}
+		bus.Publish(event.Event{
+			Topic:  event.TopicDeck,
+			Action: event.ActionCueGoStart,
 			DeckID: ctx.Deck,
 		})
 	})

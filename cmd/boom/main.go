@@ -11,7 +11,8 @@ import (
 )
 
 func main() {
-	setupCrashLog()
+	cleanup := setupCrashLog()
+	defer cleanup()
 
 	a, err := app.New()
 	if err != nil {
@@ -21,7 +22,9 @@ func main() {
 	a.Run()
 }
 
-func setupCrashLog() {
+func setupCrashLog() func() {
+	noop := func() {}
+
 	dir, err := os.UserCacheDir()
 	if err != nil {
 		dir = os.TempDir()
@@ -29,18 +32,26 @@ func setupCrashLog() {
 	dir = filepath.Join(dir, "boom", "crashes")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "boom: crash log dir: %v\n", err)
-		return
+		return noop
 	}
 	path := filepath.Join(dir, fmt.Sprintf("crash-%s.log", time.Now().Format("20060102-150405")))
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "boom: crash log open: %v\n", err)
-		return
+		return noop
 	}
 	if err := debug.SetCrashOutput(f, debug.CrashOptions{}); err != nil {
 		fmt.Fprintf(os.Stderr, "boom: SetCrashOutput: %v\n", err)
 		f.Close()
-		return
+		os.Remove(path)
+		return noop
 	}
-	fmt.Fprintf(os.Stderr, "boom: crash log -> %s\n", path)
+
+	return func() {
+		debug.SetCrashOutput(nil, debug.CrashOptions{})
+		f.Close()
+		if st, err := os.Stat(path); err == nil && st.Size() == 0 {
+			os.Remove(path)
+		}
+	}
 }

@@ -20,6 +20,7 @@ const (
 	ActionPlayPause       = "play_pause"
 	ActionCue             = "cue"
 	ActionCueDelete       = "cue_delete"
+	ActionCueGoStart      = "cue_go_start"
 	ActionCuePointChanged = "cue_point_changed"
 	ActionSeek            = "seek"
 	ActionLoadTrack    = "load_track"

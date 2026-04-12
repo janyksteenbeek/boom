@@ -3,6 +3,7 @@ package audio
 import (
 	"fmt"
 	"log"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -24,9 +25,15 @@ type Engine struct {
 	sampleRate int
 	stopCh     chan struct{}
 
+	autoCue atomic.Bool // auto-cue on load (fallback cue = first audio frame)
+
 	otoCtx *oto.Context
 	player *oto.Player
 }
+
+// SetAutoCue toggles auto-cue-on-load. When enabled, tracks without a saved
+// manual cue seek to the first audible sample rather than sample 0.
+func (e *Engine) SetAutoCue(v bool) { e.autoCue.Store(v) }
 
 // audioReader implements io.Reader and feeds mixed audio to the oto player.
 // All processing is allocation-free: pre-decoded PCM, pre-allocated buffers.
@@ -169,25 +176,25 @@ func (e *Engine) subscribeEvents() {
 			})
 
 		case event.ActionCue:
+			// Rekordbox cue behavior:
+			// - Playing + press → back-cue: seek to effective cue, enter cue_preview.
+			// - Paused  + press → set manual cue at current playhead, enter cue_preview.
+			// - Release while in preview → pause + seek back to cue.
 			if deck.Track() == nil {
 				return nil
 			}
 			if ev.Pressed {
 				deck.SetCueHeld(true)
 				if deck.IsPlaying() {
-					// Playing → set new cue point at current position. No audio change.
+					// Back-cue: jump to effective cue, keep audio running as preview.
+					deck.Seek(deck.EffectiveCue())
+					deck.SetCuePreview(true)
+				} else {
+					// Paused: SET cue at playhead (replaces any previous manual cue),
+					// then start preview playback from that point.
 					newPos := deck.Position()
 					deck.SetCuePoint(newPos)
 					e.publishCuePointChanged(deck, newPos)
-					deck.SetCuePreview(false)
-				} else {
-					// Paused → jump to cue + start preview. A quick release lands you
-					// "at the cue, paused"; holding keeps the preview running until release.
-					target := deck.CuePoint()
-					if target < 0 {
-						target = 0
-					}
-					deck.Seek(target)
 					deck.Play()
 					deck.SetCuePreview(true)
 					e.bus.PublishAsync(event.Event{
@@ -198,12 +205,8 @@ func (e *Engine) subscribeEvents() {
 			} else {
 				deck.SetCueHeld(false)
 				if deck.CuePreview() {
-					target := deck.CuePoint()
-					if target < 0 {
-						target = 0
-					}
 					deck.Pause()
-					deck.Seek(target)
+					deck.Seek(deck.EffectiveCue())
 					deck.SetCuePreview(false)
 					e.bus.PublishAsync(event.Event{
 						Topic: event.TopicEngine, Action: event.ActionPlayState,
@@ -215,6 +218,19 @@ func (e *Engine) subscribeEvents() {
 		case event.ActionCueDelete:
 			deck.ClearCue()
 			e.publishCuePointChanged(deck, -1)
+
+		case event.ActionCueGoStart:
+			// SHIFT + CUE: jump to track start, paused. Does not touch the cue point.
+			if deck.Track() == nil {
+				return nil
+			}
+			deck.Pause()
+			deck.Seek(0)
+			deck.SetCuePreview(false)
+			e.bus.PublishAsync(event.Event{
+				Topic: event.TopicEngine, Action: event.ActionPlayState,
+				DeckID: ev.DeckID, Value: 0.0,
+			})
 
 		case event.ActionSeek:
 			deck.Seek(ev.Value)
@@ -261,22 +277,29 @@ func (e *Engine) subscribeEvents() {
 			}
 			deckID := ev.DeckID
 			go func() {
-				err := deck.LoadTrack(track)
-				if err == nil {
-					if track.HasCuePoint() {
-						deck.SetCuePoint(track.CuePoint)
-					} else {
-						deck.ClearCue()
-					}
-					e.publishCuePointChanged(deck, deck.CuePoint())
-					deck.Play()
-					e.bus.PublishAsync(event.Event{
-						Topic: event.TopicEngine, Action: event.ActionPlayState,
-						DeckID: deckID, Value: 1.0,
-					})
-				} else {
+				if err := deck.LoadTrack(track); err != nil {
 					log.Printf("engine: load failed deck %d: %v", deckID, err)
+					return
 				}
+				// Fallback cue = first audio frame if auto-cue is on, else 0.
+				var fallback float64
+				if e.autoCue.Load() {
+					fallback = deck.FirstAudioFrame()
+				}
+				deck.SetFallbackCue(fallback)
+				// Restore manual cue from DB (if saved).
+				if track.HasCuePoint() {
+					deck.SetCuePoint(track.CuePoint)
+				} else {
+					deck.ClearCue()
+				}
+				e.publishCuePointChanged(deck, deck.CuePoint())
+				// Seek to effective cue, stay paused (no auto-play).
+				deck.Seek(deck.EffectiveCue())
+				e.bus.PublishAsync(event.Event{
+					Topic: event.TopicEngine, Action: event.ActionPlayState,
+					DeckID: deckID, Value: 0.0,
+				})
 			}()
 		}
 		return nil

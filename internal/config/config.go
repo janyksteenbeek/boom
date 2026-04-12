@@ -62,6 +62,7 @@ type Config struct {
 	AutoAnalyzeOnDeckLoad bool   `yaml:"auto_analyze_on_deck_load"`
 	AutoAnalyzeOnImport   bool   `yaml:"auto_analyze_on_import"`
 	BPMRange              string `yaml:"bpm_range"` // "normal", "wide", or genre presets
+	AutoCue               bool   `yaml:"auto_cue"`  // Seek to first audio frame on track load (fallback cue)
 }
 
 // Load reads the configuration from the default config file.

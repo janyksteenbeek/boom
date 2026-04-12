@@ -53,6 +53,9 @@ decks:
       midi: { status: note, number: 12 }    # ch0/1 Note 12
       action: cue
       led: { status: note, number: 12, on_value: 0x7F, off_value: 0x00 }
+      layers:
+        shift:
+          action: cue_go_start
 
     - name: sync
       type: button

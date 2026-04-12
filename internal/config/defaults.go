@@ -28,6 +28,7 @@ func DefaultConfig() *Config {
 		AutoAnalyzeOnDeckLoad: true,
 		AutoAnalyzeOnImport:   false,
 		BPMRange:              "normal",
+		AutoCue:               true,
 	}
 }
 
