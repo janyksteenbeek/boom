@@ -315,16 +315,14 @@ func (e *Engine) handleLoadTrack(deck *Deck, ev event.Event) error {
 		// Snapshot the decode-done channel for *this* load immediately —
 		// a subsequent LoadTrack would install a fresh one.
 		decodeDone := deck.DecodeDone()
-		// Wait for the streaming decoder to finish before computing the
-		// auto-cue and seeking, since FirstAudioFrame needs the full PCM
-		// to produce a position normalized against the whole track.
-		<-decodeDone
-		// Fallback cue = first audio frame if auto-cue is on, else 0.
-		var fallback float64
-		if e.autoCue.Load() {
-			fallback = deck.FirstAudioFrame()
-		}
-		deck.SetFallbackCue(fallback)
+
+		// Initial cue setup runs synchronously so PLAY works correctly the
+		// instant the first PCM chunk arrives, even before decode finishes.
+		// Fallback cue starts at 0 and is refined to FirstAudioFrame once
+		// the full buffer is available — but only if the user hasn't
+		// touched the deck yet (see below), so we never yank playback back
+		// to the start mid-performance.
+		deck.SetFallbackCue(0)
 		if track.HasCuePoint() {
 			deck.SetCuePoint(track.CuePoint)
 		} else {
@@ -338,6 +336,20 @@ func (e *Engine) handleLoadTrack(deck *Deck, ev event.Event) error {
 			Topic: event.TopicEngine, Action: event.ActionPlayState,
 			DeckID: deckID, Value: 0.0,
 		})
+
+		// Wait for full decode, then refine the auto-cue to the first
+		// non-silent frame. Re-seek only when the deck is still at its
+		// initial resting state (not playing, no manual cue stored) so
+		// an already-playing user isn't jerked backwards.
+		<-decodeDone
+		if !e.autoCue.Load() {
+			return
+		}
+		fallback := deck.FirstAudioFrame()
+		deck.SetFallbackCue(fallback)
+		if !deck.IsPlaying() && !deck.HasCue() {
+			deck.Seek(fallback)
+		}
 	}()
 	return nil
 }
