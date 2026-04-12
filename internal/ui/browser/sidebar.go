@@ -169,6 +169,47 @@ func (s *Sidebar) updateSelection(id string) {
 	}
 }
 
+// ScrollBy moves the sidebar selection by one item in the direction of delta
+// and fires onSelect so the library filter updates. Called from MIDI browse
+// events when sidebar focus is active.
+func (s *Sidebar) ScrollBy(delta int) {
+	if delta == 0 {
+		return
+	}
+	step := 1
+	if delta < 0 {
+		step = -1
+	}
+
+	s.mu.Lock()
+	if len(s.items) == 0 {
+		s.mu.Unlock()
+		return
+	}
+	currentIdx := -1
+	for i, item := range s.items {
+		if item.id == s.selectedID {
+			currentIdx = i
+			break
+		}
+	}
+	newIdx := currentIdx + step
+	if newIdx < 0 {
+		newIdx = 0
+	}
+	if newIdx >= len(s.items) {
+		newIdx = len(s.items) - 1
+	}
+	newID := s.items[newIdx].id
+	s.selectedID = newID
+	s.mu.Unlock()
+
+	s.updateSelection(newID)
+	if s.onSelect != nil {
+		s.onSelect(newID)
+	}
+}
+
 func (s *Sidebar) MinSize() fyne.Size {
 	return fyne.NewSize(sidebarWidth, 100)
 }

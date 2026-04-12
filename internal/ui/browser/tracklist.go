@@ -199,20 +199,28 @@ func (t *TrackList) Sort(colID string, ascending bool) {
 	})
 }
 
-// ScrollBy moves the selection by delta items (negative = up, positive = down).
-// Called from MIDI browse_scroll events.
+// ScrollBy moves the selection by one item in the direction of delta.
+// Called from MIDI browse_scroll events — always single-step regardless of
+// encoder magnitude, so the wheel advances one track per detent.
 func (t *TrackList) ScrollBy(delta int) {
+	if delta == 0 {
+		return
+	}
+	step := 1
+	if delta < 0 {
+		step = -1
+	}
 	t.mu.Lock()
-	newIdx := t.selectedIdx + delta
+	if len(t.tracks) == 0 {
+		t.mu.Unlock()
+		return
+	}
+	newIdx := t.selectedIdx + step
 	if newIdx < 0 {
 		newIdx = 0
 	}
 	if newIdx >= len(t.tracks) {
 		newIdx = len(t.tracks) - 1
-	}
-	if len(t.tracks) == 0 {
-		t.mu.Unlock()
-		return
 	}
 	t.selectedIdx = newIdx
 	t.mu.Unlock()
