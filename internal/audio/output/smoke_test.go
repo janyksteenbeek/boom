@@ -21,7 +21,7 @@ func skipUnlessIntegration(t *testing.T) {
 	}
 }
 
-// TestEnumerateDevicesSmoke is a sanity check that the miniaudio backend
+// TestEnumerateDevicesSmoke is a sanity check that the portaudio backend
 // initialises and returns at least the system default playback device on
 // the host running the test.
 func TestEnumerateDevicesSmoke(t *testing.T) {
@@ -39,16 +39,15 @@ func TestEnumerateDevicesSmoke(t *testing.T) {
 	if len(devs) == 0 {
 		t.Skip("no playback devices on host")
 	}
-	t.Logf("found %d devices via %q backend",
-		len(devs), b.(*miniaudioBackend).BackendName())
+	t.Logf("found %d devices via portaudio", len(devs))
 	for _, d := range devs {
-		t.Logf("  - %-30s default=%-5v ch=%d id=%s…",
-			d.Name, d.IsDefault, d.NumChannels, truncate(d.ID, 16))
+		t.Logf("  - %-30s default=%-5v ch=%d id=%s",
+			d.Name, d.IsDefault, d.NumChannels, truncate(d.ID, 32))
 	}
 }
 
 // TestMultiStreamSmoke opens two output streams in parallel — the
-// motivating use case for this whole package. If miniaudio cannot
+// motivating use case for this whole package. If portaudio cannot
 // open both, this fails loudly.
 func TestMultiStreamSmoke(t *testing.T) {
 	skipUnlessIntegration(t)
@@ -99,8 +98,7 @@ func TestMultiStreamSmoke(t *testing.T) {
 
 // TestOpenDefaultStreamSmoke opens the system default device, writes a
 // short silence buffer, and confirms a clean close. If this works the
-// cgo + ring buffer + render-callback path is wired up correctly
-// end-to-end.
+// portaudio blocking-write path is wired up correctly end-to-end.
 func TestOpenDefaultStreamSmoke(t *testing.T) {
 	skipUnlessIntegration(t)
 	b, err := New()

@@ -1,0 +1,2 @@
+# Vendored third-party single-header library — exclude from language stats.
+internal/audio/output/miniaudio.h linguist-vendored

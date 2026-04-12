@@ -7,6 +7,7 @@ require (
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gopxl/beep/v2 v2.1.1
+	github.com/gordonklaus/portaudio v0.0.0-20260203164431-765aa7dfa631
 	gitlab.com/gomidi/midi/v2 v2.3.23
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.48.2

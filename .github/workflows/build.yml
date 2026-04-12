@@ -23,10 +23,12 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - name: Install audio dev headers
+      - name: Install audio + GUI dev headers
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-dev xorg-dev libasound2-dev libxxf86vm-dev
+          sudo apt-get install -y \
+            libgl1-mesa-dev xorg-dev libxxf86vm-dev \
+            libasound2-dev portaudio19-dev pkg-config
       - name: go vet
         run: go vet ./...
       - name: go test
@@ -70,35 +72,95 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ── Linux: apt for fyne/GLFW + portaudio dev package ─────────────
+      - name: Install Linux build deps
+        if: matrix.goos == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1-mesa-dev xorg-dev libxxf86vm-dev \
+            libasound2-dev portaudio19-dev pkg-config
+
+      # ── macOS: brew for portaudio + pkg-config ───────────────────────
+      - name: Install macOS build deps
+        if: matrix.goos == 'darwin'
+        run: |
+          brew update
+          brew install portaudio pkg-config
+
+      # ── Windows: msys2 ships mingw-w64 *and* portaudio + pkg-config
+      # in one package, which is far less painful than chocolatey or
+      # vcpkg for cgo. Subsequent steps that need the toolchain run
+      # under `shell: msys2 {0}`.
+      - name: Set up msys2 with portaudio
+        if: matrix.goos == 'windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-portaudio
+            mingw-w64-x86_64-pkgconf
+
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      # Fyne / GLFW need OpenGL + X11 + ALSA headers on Linux. miniaudio
-      # dlopens libasound at runtime, but the Linux runner needs the
-      # build-time headers anyway because we link against libasound's
-      # dynamic loader interface.
-      - name: Install Linux build deps
-        if: matrix.goos == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-dev xorg-dev libasound2-dev libxxf86vm-dev
-
+      # ── Build (linux/darwin) ─────────────────────────────────────────
       - name: Build
+        if: matrix.goos != 'windows'
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '1'
-        shell: bash
         run: |
           mkdir -p build
           go build -ldflags "-s -w" -o build/${{ matrix.artifact }} ./cmd/boom
 
-      - name: Upload artifact
+      # ── Build (windows, under msys2 so the cgo toolchain is found) ──
+      - name: Build (windows)
+        if: matrix.goos == 'windows'
+        shell: msys2 {0}
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: '1'
+        run: |
+          export PATH="/mingw64/bin:$PATH"
+          export PKG_CONFIG_PATH="/mingw64/lib/pkgconfig"
+          mkdir -p build
+          go build -ldflags "-s -w" -o build/${{ matrix.artifact }} ./cmd/boom
+          # Bundle libportaudio + its mingw runtime deps next to the
+          # exe. Windows looks in the executable's directory before PATH,
+          # so the user just unzips and double-clicks.
+          cp /mingw64/bin/libportaudio.dll       build/ 2>/dev/null || \
+          cp /mingw64/bin/libportaudio-2.dll     build/
+          cp /mingw64/bin/libwinpthread-1.dll    build/ 2>/dev/null || true
+          cp /mingw64/bin/libgcc_s_seh-1.dll     build/ 2>/dev/null || true
+          cp /mingw64/bin/libstdc++-6.dll        build/ 2>/dev/null || true
+
+      # macOS / linux upload only the raw binary; users on those platforms
+      # either build the proper packaged bundle locally with `make
+      # package-*` (which runs scripts/bundle-portaudio-darwin.sh) or
+      # already have libportaudio installed via their package manager.
+      - name: Upload artifact (single binary)
+        if: matrix.goos != 'windows'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: build/${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 14
+
+      # Windows: upload the whole build/ dir so libportaudio.dll travels
+      # with the exe.
+      - name: Upload artifact (windows bundle)
+        if: matrix.goos == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: build/
           if-no-files-found: error
           retention-days: 14
