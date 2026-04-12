@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"log"
+	"math"
 	"time"
 
 	"github.com/janyksteenbeek/boom/internal/analysis"
@@ -272,6 +273,7 @@ func (a *App) ledFeedbackLoop() {
 	defer ticker.Stop()
 
 	var lastPlay, lastCue [audio.NumDecks]bool
+	var lastLoopIn, lastLoopOut [audio.NumDecks]bool
 	var initialized [audio.NumDecks]bool
 
 	for {
@@ -325,6 +327,31 @@ func (a *App) ledFeedbackLoop() {
 					lastCue[i] = cueOn
 					a.ledMgr.Update("cue", i+1, cueOn)
 				}
+
+				// Loop IN: solid when a full loop is stored/active, flashing
+				// while the user is "recording" (start set but no end yet),
+				// off otherwise. Loop OUT: solid only while the loop is
+				// actually wrapping playback. Matches DDJ-FLX4 / Rekordbox.
+				var loopInOn bool
+				switch {
+				case !hasTrack:
+					loopInOn = false
+				case deck.HasLoop():
+					loopInOn = true
+				case !isNaN(deck.LoopStart()):
+					loopInOn = cueBlink // 2 Hz flash while recording
+				}
+				loopOutOn := hasTrack && deck.IsLoopActive()
+
+				if !initialized[i] || loopInOn != lastLoopIn[i] {
+					lastLoopIn[i] = loopInOn
+					a.ledMgr.Update("loop_in", i+1, loopInOn)
+				}
+				if !initialized[i] || loopOutOn != lastLoopOut[i] {
+					lastLoopOut[i] = loopOutOn
+					a.ledMgr.Update("loop_out", i+1, loopOutOn)
+				}
+
 				initialized[i] = true
 			}
 		}
@@ -359,6 +386,8 @@ func (a *App) vuMeterLoop() {
 		}
 	}
 }
+
+func isNaN(f float64) bool { return math.IsNaN(f) }
 
 // registerActions maps standard DJ actions to event bus events.
 func registerActions(registry *controller.ActionRegistry, bus *event.Bus) {
