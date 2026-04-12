@@ -312,6 +312,13 @@ func (e *Engine) handleLoadTrack(deck *Deck, ev event.Event) error {
 			log.Printf("engine: load failed deck %d: %v", deckID, err)
 			return
 		}
+		// Snapshot the decode-done channel for *this* load immediately —
+		// a subsequent LoadTrack would install a fresh one.
+		decodeDone := deck.DecodeDone()
+		// Wait for the streaming decoder to finish before computing the
+		// auto-cue and seeking, since FirstAudioFrame needs the full PCM
+		// to produce a position normalized against the whole track.
+		<-decodeDone
 		// Fallback cue = first audio frame if auto-cue is on, else 0.
 		var fallback float64
 		if e.autoCue.Load() {

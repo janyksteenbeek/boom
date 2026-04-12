@@ -1,5 +1,7 @@
 package event
 
+import "github.com/janyksteenbeek/boom/pkg/model"
+
 // Topic identifies an event category for subscription filtering.
 type Topic string
 
@@ -25,6 +27,7 @@ const (
 	ActionSeek            = "seek"
 	ActionLoadTrack    = "load_track"
 	ActionTrackLoaded  = "track_loaded"
+	ActionTrackDecoded = "track_decoded"
 	ActionVolumeChange = "volume_change"
 	ActionTempoChange  = "tempo_change"
 	ActionEQHigh       = "eq_high"
@@ -110,6 +113,16 @@ type LoopState struct {
 	End    float64 // normalized 0..1; <=Start = unset
 	Beats  float64 // 0 = manual loop (no beat length known)
 	Active bool
+}
+
+// TrackDecodedPayload accompanies ActionTrackDecoded, which fires once a
+// deck has finished streaming its full PCM buffer. Carries a reference to
+// the decoded samples so downstream consumers (analyzer) can avoid a second
+// file decode pass. The slice must be treated as read-only.
+type TrackDecodedPayload struct {
+	Track      *model.Track
+	Samples    [][2]float32
+	SampleRate int
 }
 
 // AnalysisResult carries completed analysis data for a single track.

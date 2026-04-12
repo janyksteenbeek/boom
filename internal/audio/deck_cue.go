@@ -61,16 +61,22 @@ func (d *Deck) SetCuePreview(v bool) { d.cuePreview.Store(v) }
 
 // FirstAudioFrame scans the PCM buffer for the first sample whose absolute
 // amplitude exceeds a silence threshold (~-60 dBFS) and returns the position
-// as a normalized 0..1 fraction. Returns 0 if the buffer is empty or the track
-// never rises above silence. Safe to call after LoadTrack completes.
+// as a normalized 0..1 fraction of the full track. Must only be called once
+// the streaming decode has completed (i.e. after <-deck.DecodeDone()) so
+// the normalization denominator matches the UI's position scale.
 func (d *Deck) FirstAudioFrame() float64 {
 	p := d.pcm.Load()
-	if p == nil || p.len == 0 {
+	if p == nil {
+		return 0
+	}
+	pLen := p.Len()
+	pTotal := p.Total()
+	if pLen == 0 || pTotal == 0 {
 		return 0
 	}
 	const threshold float32 = 0.001 // ~-60 dBFS
-	samples := p.samples[:p.len]
-	for i := 0; i < p.len; i++ {
+	samples := p.samples[:pLen]
+	for i := 0; i < pLen; i++ {
 		l := samples[i][0]
 		r := samples[i][1]
 		if l < 0 {
@@ -80,7 +86,7 @@ func (d *Deck) FirstAudioFrame() float64 {
 			r = -r
 		}
 		if l > threshold || r > threshold {
-			return float64(i) / float64(p.len)
+			return float64(i) / float64(pTotal)
 		}
 	}
 	return 0
@@ -91,9 +97,13 @@ func (d *Deck) FirstAudioFrame() float64 {
 // when no track is loaded.
 func (d *Deck) AtEffectiveCue() bool {
 	p := d.pcm.Load()
-	if p == nil || p.len == 0 {
+	if p == nil {
 		return false
 	}
-	eps := float64(d.sampleRate) * 0.05 / float64(p.len)
+	pTotal := p.Total()
+	if pTotal == 0 {
+		return false
+	}
+	eps := float64(d.sampleRate) * 0.05 / float64(pTotal)
 	return math.Abs(d.Position()-d.EffectiveCue()) <= eps
 }

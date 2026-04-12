@@ -12,9 +12,40 @@ import (
 )
 
 // pcmBuffer holds decoded audio samples at the target sample rate.
+//
+// Two length fields cover the streaming-decode lifecycle:
+//
+//   - totalLen is the expected final length of the track, known at LoadTrack
+//     time from the decoder's reported length (adjusted for resample ratio).
+//     It is fixed for the lifetime of the buffer and is what duration /
+//     normalization math (loop, cue, posSnapshot) uses so the UI doesn't
+//     jump while more samples stream in.
+//
+//   - decodedLen is what has actually been written so far. It grows
+//     monotonically as the decode goroutine fills samples and is the only
+//     bound the audio thread may read up to. Atomic so Stream() can Load()
+//     without a lock.
+//
+// If the decoder produces more samples than estimated (VBR MP3 etc.), the
+// write path allocates a new, larger pcmBuffer and swaps it via d.pcm.Store
+// — the in-flight audio callback continues reading from the old snapshot
+// until its next Stream() call.
 type pcmBuffer struct {
-	samples [][2]float32
-	len     int
+	samples    [][2]float32 // pre-allocated to at least totalLen
+	totalLen   int          // expected total samples (fixed)
+	decodedLen atomic.Int64 // samples written so far (grows)
+}
+
+// Len returns the number of samples currently decoded (safe for audio thread).
+func (p *pcmBuffer) Len() int { return int(p.decodedLen.Load()) }
+
+// Total returns the expected total sample count for the track.
+// Duration math should use this, not Len(), so the UI doesn't rescale.
+func (p *pcmBuffer) Total() int {
+	if p.totalLen > 0 {
+		return p.totalLen
+	}
+	return p.Len()
 }
 
 // WaveformCache is satisfied by library.Store. The audio package defines
@@ -114,6 +145,13 @@ type Deck struct {
 	track    atomic.Pointer[model.Track]
 	waveform atomic.Pointer[WaveformData]
 
+	// decodeDone is closed by the streaming decode goroutine once the full
+	// PCM buffer is available. A new channel is installed on every LoadTrack
+	// call. Stored as a pointer so callers snapshot the channel for *their*
+	// specific load and aren't racing with a fresh channel installed by a
+	// subsequent load.
+	decodeDone atomic.Pointer[chan struct{}]
+
 	// Optional cache for pre-computed waveform peaks. If non-nil, LoadTrack
 	// will consult this before running the (relatively expensive) full
 	// waveform generation pass.
@@ -153,18 +191,47 @@ func (d *Deck) Waveform() *WaveformData { return d.waveform.Load() }
 
 // PCMSamples returns a read-only reference to the decoded PCM buffer.
 // The returned slice must not be modified. Returns nil if no track is loaded.
+// The slice reflects samples decoded so far — during streaming decode the
+// caller may see a shorter buffer than the full track.
 func (d *Deck) PCMSamples() [][2]float32 {
 	p := d.pcm.Load()
 	if p == nil {
 		return nil
 	}
-	return p.samples[:p.len]
+	return p.samples[:p.Len()]
 }
 
-// LoadTrack decodes the entire file to a PCM buffer at the target sample rate.
-// This runs on the calling goroutine (NOT the audio thread). May take a moment.
+// DecodeDone returns a channel that is closed when the currently loading
+// track has finished streaming its full PCM buffer. Each call to LoadTrack
+// installs a fresh channel; call this *after* LoadTrack to obtain the
+// channel tied to that specific load.
+func (d *Deck) DecodeDone() <-chan struct{} {
+	if ch := d.decodeDone.Load(); ch != nil {
+		return *ch
+	}
+	closed := make(chan struct{})
+	close(closed)
+	return closed
+}
+
+// decodeChunkSeconds is how often the streaming decoder publishes an updated
+// waveform and flushes the latest sample count to the audio thread. 5 sec is
+// a good balance: small enough to feel responsive, large enough that the
+// re-normalization flicker on the waveform is infrequent.
+const decodeChunkSeconds = 5
+
+// LoadTrack opens the file, pre-allocates a PCM buffer sized for the full
+// track, and spawns a goroutine that streams the decoded samples into it.
+// LoadTrack itself only blocks long enough to open the file and allocate
+// the buffer — playback and waveform updates begin as samples arrive.
+//
+// Callers that need to wait for the full track (e.g. to compute the
+// auto-cue, or kick off whole-track analysis) should snapshot the
+// DecodeDone() channel *immediately after* LoadTrack returns and read from
+// it; the channel returned for this specific load is installed before
+// LoadTrack publishes ActionTrackLoaded.
 func (d *Deck) LoadTrack(track *model.Track) error {
-	log.Printf("deck %d: decoding '%s'...", d.id, track.Title)
+	log.Printf("deck %d: opening '%s'...", d.id, track.Title)
 
 	src, format, err := Decode(track.Path)
 	if err != nil {
@@ -179,29 +246,22 @@ func (d *Deck) LoadTrack(track *model.Track) error {
 		streamer = beep.Resample(4, format.SampleRate, beep.SampleRate(d.sampleRate), src)
 	}
 
-	// Pre-allocate PCM buffer based on known track length to avoid append/realloc
+	// Estimate total sample count at the target rate. For VBR formats this
+	// may be slightly off — the decode loop grows the buffer if needed.
 	estimatedSamples := src.Len()
 	if needsResample {
 		estimatedSamples = int(float64(estimatedSamples) * float64(d.sampleRate) / float64(format.SampleRate))
 	}
-	pcm := make([][2]float32, 0, estimatedSamples+8192) // +margin
-
-	// Decode in chunks — beep returns float64, we convert to float32
-	buf := make([][2]float64, 8192)
-	for {
-		n, ok := streamer.Stream(buf)
-		if n > 0 {
-			for i := 0; i < n; i++ {
-				pcm = append(pcm, [2]float32{float32(buf[i][0]), float32(buf[i][1])})
-			}
-		}
-		if !ok {
-			break
-		}
+	if estimatedSamples < 1 {
+		estimatedSamples = d.sampleRate // 1 sec fallback
 	}
-	src.Close()
-
-	log.Printf("deck %d: decoded %d samples (%.1f sec)", d.id, len(pcm), float64(len(pcm))/float64(d.sampleRate))
+	// Pre-allocate with generous headroom so VBR overruns don't trigger a
+	// realloc + swap on every track.
+	capacity := estimatedSamples + estimatedSamples/20 + 8192
+	pcm := &pcmBuffer{
+		samples:  make([][2]float32, capacity),
+		totalLen: estimatedSamples,
+	}
 
 	// Stop playback BEFORE swapping the PCM buffer so the callback never
 	// reads the new buffer at the old position (race window elimination).
@@ -216,18 +276,151 @@ func (d *Deck) LoadTrack(track *model.Track) error {
 	d.storeFloat(&d.loopStart, math.NaN())
 	d.storeFloat(&d.loopEnd, math.NaN())
 	d.storeFloat(&d.loopBeats, 0)
-	// cuePoint is set by the engine after LoadTrack returns (from track.CuePoint).
-	d.pcm.Store(&pcmBuffer{samples: pcm, len: len(pcm)}) // swap buffer
+	// cuePoint is set by the engine after decode completes (from track.CuePoint).
+	d.pcm.Store(pcm)
 	d.track.Store(track)
+	d.waveform.Store(nil)
 	d.pendingReset.Store(true) // signal audio thread to reset pos/fade/EQ
 
-	go d.generateWaveform()
+	// Install a fresh decode-done channel for this load. The caller will
+	// snapshot it via DecodeDone() right after we return.
+	doneCh := make(chan struct{})
+	d.decodeDone.Store(&doneCh)
+
+	// Check cache first — if we have the waveform on disk, skip the live
+	// builder entirely and just publish it.
+	var cachedWF *WaveformData
+	if d.wfCache != nil && track.ID != "" {
+		if cached, ok := d.wfCache.GetWaveform(track.ID, d.sampleRate, track.FileMtime); ok && cached != nil {
+			cachedWF = cached
+			d.waveform.Store(cached)
+		}
+	}
 
 	d.bus.PublishAsync(event.Event{
 		Topic: event.TopicEngine, Action: event.ActionTrackLoaded,
 		DeckID: d.id, Payload: track,
 	})
+	if cachedWF != nil {
+		d.bus.PublishAsync(event.Event{
+			Topic: event.TopicEngine, Action: event.ActionWaveformReady,
+			DeckID: d.id, Payload: cachedWF,
+		})
+	}
+
+	go d.streamDecode(src, streamer, pcm, track, estimatedSamples, cachedWF != nil, doneCh)
 	return nil
+}
+
+// streamDecode runs on its own goroutine. It pulls blocks from the beep
+// streamer, writes them into the pcmBuffer (growing it if the decoder
+// overshoots the estimate), and — once per ~decodeChunkSeconds of audio —
+// re-runs the waveform builder and publishes a waveform update. On
+// completion it fires ActionTrackDecoded with the finished PCM so the
+// analyzer can run whole-track analysis without re-decoding the file, and
+// closes doneCh so the engine's post-load setup can proceed.
+func (d *Deck) streamDecode(src beep.StreamSeekCloser, streamer beep.Streamer, initial *pcmBuffer, track *model.Track, estimatedSamples int, wfCached bool, doneCh chan struct{}) {
+	defer src.Close()
+	defer close(doneCh)
+
+	pcm := initial
+
+	var builder *WaveformBuilder
+	if !wfCached {
+		builder = NewWaveformBuilder(estimatedSamples, d.sampleRate)
+	}
+
+	chunkThreshold := d.sampleRate * decodeChunkSeconds
+	tmp := make([][2]float64, 8192)
+
+	writePos := 0
+	sinceEvent := 0
+
+	for {
+		// Guard against another LoadTrack overwriting our buffer pointer —
+		// if that happens we abandon this decode without publishing stale
+		// data.
+		if d.pcm.Load() != pcm {
+			return
+		}
+
+		n, ok := streamer.Stream(tmp)
+		if n > 0 {
+			// Grow if the decoder produced more than the estimate.
+			if writePos+n > len(pcm.samples) {
+				newCap := (writePos + n) * 2
+				bigger := &pcmBuffer{
+					samples:  make([][2]float32, newCap),
+					totalLen: writePos + n, // revise upward — estimate was low
+				}
+				copy(bigger.samples, pcm.samples[:writePos])
+				bigger.decodedLen.Store(int64(writePos))
+				if !d.pcm.CompareAndSwap(pcm, bigger) {
+					// Someone else swapped the buffer (new LoadTrack). Bail.
+					return
+				}
+				pcm = bigger
+			}
+			for i := 0; i < n; i++ {
+				pcm.samples[writePos+i] = [2]float32{float32(tmp[i][0]), float32(tmp[i][1])}
+			}
+			writePos += n
+			// Release-store the new length so the audio thread can see the
+			// freshly-written samples in order.
+			pcm.decodedLen.Store(int64(writePos))
+			sinceEvent += n
+		}
+
+		if !ok {
+			break
+		}
+
+		if sinceEvent >= chunkThreshold && builder != nil {
+			builder.Feed(pcm.samples, writePos)
+			data := builder.Snapshot()
+			d.waveform.Store(data)
+			d.bus.PublishAsync(event.Event{
+				Topic: event.TopicEngine, Action: event.ActionWaveformReady,
+				DeckID: d.id, Payload: data,
+			})
+			sinceEvent = 0
+		}
+	}
+
+	// Real length may differ from the initial estimate. Correct totalLen so
+	// downstream math (duration, loops, normalization) uses the truth.
+	if writePos != pcm.totalLen {
+		pcm.totalLen = writePos
+	}
+
+	log.Printf("deck %d: decoded %d samples (%.1f sec)", d.id, writePos, float64(writePos)/float64(d.sampleRate))
+
+	if builder != nil {
+		builder.Feed(pcm.samples, writePos)
+		builder.Flush(pcm.samples, writePos)
+		data := builder.Snapshot()
+		d.waveform.Store(data)
+		d.bus.PublishAsync(event.Event{
+			Topic: event.TopicEngine, Action: event.ActionWaveformReady,
+			DeckID: d.id, Payload: data,
+		})
+		if d.wfCache != nil && track.ID != "" {
+			if err := d.wfCache.PutWaveform(track.ID, data, track.FileMtime); err != nil {
+				log.Printf("deck %d: cache waveform: %v", d.id, err)
+			}
+		}
+	}
+
+	d.bus.PublishAsync(event.Event{
+		Topic:  event.TopicEngine,
+		Action: event.ActionTrackDecoded,
+		DeckID: d.id,
+		Payload: &event.TrackDecodedPayload{
+			Track:      track,
+			Samples:    pcm.samples[:writePos],
+			SampleRate: d.sampleRate,
+		},
+	})
 }
 
 func (d *Deck) storeFloat(a *atomic.Uint64, v float64) {

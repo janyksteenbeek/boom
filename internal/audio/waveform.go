@@ -28,6 +28,189 @@ const (
 	freqMidMax  = 4000.0
 )
 
+// WaveformBuilder computes peak data incrementally as PCM samples become
+// available during a streaming decode. It pre-sizes its output slices from
+// an estimated total sample count so downstream UI code can render partial
+// waveforms without worrying about array length changes. The un-filled
+// trailing slots are zero and naturally render as empty space.
+//
+// Normalization is recomputed on every Snapshot() against the rolling max
+// of the peaks seen so far. That means previously-drawn bars may visually
+// shrink when a late chunk introduces a new loudest peak, but because we
+// only snapshot once per ~5 seconds of decoded audio the rescale is
+// infrequent enough to stay unobtrusive.
+type WaveformBuilder struct {
+	sampleRate int
+	resolution int
+	fftSize    int
+
+	lowMaxBin, midMaxBin, nyquistBin int
+
+	mono   []float64
+	fftBuf []complex128
+
+	peakCap  int // number of peak slots
+	rawPeaks []float64
+	rawLow   []float64
+	rawMid   []float64
+	rawHigh  []float64
+
+	peakIdx     int // next peak slot to fill
+	samplesUsed int // samples consumed into peaks so far
+
+	expectedSamples int
+}
+
+// NewWaveformBuilder creates a builder sized for the estimated total
+// samples of the track. It pre-allocates the peak slices; the caller may
+// Feed() as many times as needed and then Snapshot() to get the current
+// (normalized) waveform.
+func NewWaveformBuilder(estimatedSamples, sampleRate int) *WaveformBuilder {
+	if estimatedSamples < defaultPeakCount {
+		estimatedSamples = defaultPeakCount
+	}
+	resolution := estimatedSamples / defaultPeakCount
+	if resolution < 1 {
+		resolution = 1
+	}
+	fftSize := nextPowerOf2(resolution)
+	sr := float64(sampleRate)
+	binWidth := sr / float64(fftSize)
+	lowMaxBin := int(freqLowMax / binWidth)
+	midMaxBin := int(freqMidMax / binWidth)
+	nyquistBin := fftSize / 2
+	if lowMaxBin < 1 {
+		lowMaxBin = 1
+	}
+	if midMaxBin <= lowMaxBin {
+		midMaxBin = lowMaxBin + 1
+	}
+	if nyquistBin <= midMaxBin {
+		nyquistBin = midMaxBin + 1
+	}
+
+	peakCap := estimatedSamples/resolution + 1
+
+	return &WaveformBuilder{
+		sampleRate:      sampleRate,
+		resolution:      resolution,
+		fftSize:         fftSize,
+		lowMaxBin:       lowMaxBin,
+		midMaxBin:       midMaxBin,
+		nyquistBin:      nyquistBin,
+		mono:            make([]float64, fftSize),
+		fftBuf:          make([]complex128, fftSize),
+		peakCap:         peakCap,
+		rawPeaks:        make([]float64, peakCap),
+		rawLow:          make([]float64, peakCap),
+		rawMid:          make([]float64, peakCap),
+		rawHigh:         make([]float64, peakCap),
+		expectedSamples: estimatedSamples,
+	}
+}
+
+// Feed processes any newly-available samples in the range
+// [samplesUsed, availableLen). Returns true if at least one new peak slot
+// was filled. Samples are read directly from the caller-owned slice — the
+// caller must guarantee the slice up to availableLen is stable for the
+// duration of the call.
+func (b *WaveformBuilder) Feed(samples [][2]float32, availableLen int) bool {
+	progressed := false
+	for b.samplesUsed+b.resolution <= availableLen && b.peakIdx < b.peakCap {
+		b.computePeak(samples, b.samplesUsed, b.resolution, b.peakIdx)
+		b.peakIdx++
+		b.samplesUsed += b.resolution
+		progressed = true
+	}
+	return progressed
+}
+
+// Flush consumes any remaining sub-resolution tail of samples so the last
+// few milliseconds of the track still contribute a peak. Call once after
+// the full decode has completed.
+func (b *WaveformBuilder) Flush(samples [][2]float32, availableLen int) {
+	if b.peakIdx >= b.peakCap {
+		return
+	}
+	n := availableLen - b.samplesUsed
+	if n <= 0 {
+		return
+	}
+	b.computePeak(samples, b.samplesUsed, n, b.peakIdx)
+	b.peakIdx++
+	b.samplesUsed += n
+}
+
+// computePeak fills one peak slot from samples[start:start+n].
+func (b *WaveformBuilder) computePeak(samples [][2]float32, start, n, slot int) {
+	if n > b.fftSize {
+		n = b.fftSize
+	}
+	for i := 0; i < n; i++ {
+		s := samples[start+i]
+		b.mono[i] = float64(s[0]+s[1]) / 2.0
+	}
+	for i := n; i < b.fftSize; i++ {
+		b.mono[i] = 0
+	}
+
+	var sumSq float64
+	for i := 0; i < n; i++ {
+		sumSq += b.mono[i] * b.mono[i]
+	}
+	rms := math.Sqrt(sumSq / float64(n))
+	b.rawPeaks[slot] = rms
+
+	for i := 0; i < b.fftSize; i++ {
+		w := 0.5 * (1.0 - math.Cos(2.0*math.Pi*float64(i)/float64(b.fftSize-1)))
+		b.fftBuf[i] = complex(b.mono[i]*w, 0)
+	}
+	fftInPlace(b.fftBuf)
+
+	var energyLow, energyMid, energyHigh float64
+	for bin := 1; bin < b.nyquistBin && bin < b.fftSize/2; bin++ {
+		mag := cmplx.Abs(b.fftBuf[bin])
+		e := mag * mag
+		if bin < b.lowMaxBin {
+			energyLow += e
+		} else if bin < b.midMaxBin {
+			energyMid += e
+		} else {
+			energyHigh += e
+		}
+	}
+	b.rawLow[slot] = math.Sqrt(energyLow)
+	b.rawMid[slot] = math.Sqrt(energyMid)
+	b.rawHigh[slot] = math.Sqrt(energyHigh)
+}
+
+// Snapshot returns a fresh WaveformData with the current normalized peaks.
+// Peaks beyond the filled count are zero and render as empty bars. Safe to
+// call concurrently from a single producer goroutine.
+func (b *WaveformBuilder) Snapshot() *WaveformData {
+	peaks := append([]float64(nil), b.rawPeaks...)
+	peaksLow := append([]float64(nil), b.rawLow...)
+	peaksMid := append([]float64(nil), b.rawMid...)
+	peaksHigh := append([]float64(nil), b.rawHigh...)
+
+	normalizeAndProcess(peaks)
+	normalizeAndProcess(peaksLow)
+	normalizeAndProcess(peaksMid)
+	normalizeAndProcess(peaksHigh)
+
+	duration := time.Duration(float64(b.expectedSamples) / float64(b.sampleRate) * float64(time.Second))
+	return &WaveformData{
+		Peaks:      peaks,
+		PeaksLow:   peaksLow,
+		PeaksMid:   peaksMid,
+		PeaksHigh:  peaksHigh,
+		SampleRate: b.sampleRate,
+		Duration:   duration,
+		NumSamples: b.expectedSamples,
+		Resolution: b.resolution,
+	}
+}
+
 // GenerateWaveformFromPCM generates frequency-colored waveform data from decoded PCM.
 func GenerateWaveformFromPCM(samples [][2]float32, sampleRate int) *WaveformData {
 	totalSamples := len(samples)

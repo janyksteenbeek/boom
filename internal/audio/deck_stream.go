@@ -1,16 +1,15 @@
 package audio
 
-import (
-	"log"
-	"math"
-
-	"github.com/janyksteenbeek/boom/internal/event"
-)
+import "math"
 
 // Stream fills the output buffer with audio samples.
 // Called ONLY from the malgo audio callback thread.
 // Zero allocations, zero I/O, zero locks — just array reads and math.
 // All mutable state (pos, fpos, fade, EQ delay) is only modified here.
+//
+// During a streaming decode the audio thread may see pLen grow over
+// successive calls; we always snapshot Len() once per Stream() call so the
+// bounds are stable for the duration of this block.
 func (d *Deck) Stream(samples [][2]float32) {
 	p := d.pcm.Load()
 	if p == nil {
@@ -19,8 +18,10 @@ func (d *Deck) Stream(samples [][2]float32) {
 		}
 		return
 	}
+	pLen := p.Len()
+	pTotal := p.Total()
 
-	d.applyPendingCommands()
+	d.applyPendingCommands(p, pTotal)
 
 	// Snapshot jog state. While scratching (vinyl mode + top touch), the
 	// platter velocity replaces the tempo and the deck must run even if
@@ -49,13 +50,13 @@ func (d *Deck) Stream(samples [][2]float32) {
 	}
 	n := len(samples)
 
-	loopActive, loopStartSamples, loopEndSamples := d.snapshotLoopBounds(p, scratching)
+	loopActive, loopStartSamples, loopEndSamples := d.snapshotLoopBounds(pTotal, scratching)
 
 	eotReached := false
 	if tempo == 1.0 {
-		eotReached = d.fillUnitTempo(samples, p, loopActive, loopStartSamples, loopEndSamples)
+		eotReached = d.fillUnitTempo(samples, p, pLen, loopActive, loopStartSamples, loopEndSamples)
 	} else {
-		d.fillTempoInterpolated(samples, p, tempo, loopActive, loopStartSamples, loopEndSamples)
+		d.fillTempoInterpolated(samples, p, pLen, tempo, loopActive, loopStartSamples, loopEndSamples)
 	}
 
 	if d.fpos < 0 {
@@ -64,8 +65,11 @@ func (d *Deck) Stream(samples [][2]float32) {
 		d.pos = int(d.fpos)
 	}
 	// Only flip playing→false on EoT when not scratching, so scratching
-	// off the end of the track doesn't kill the deck.
-	if !scratching && !loopActive && (eotReached || d.pos >= p.len) {
+	// off the end of the track doesn't kill the deck. Also require that
+	// the decoded length has reached the expected total — otherwise we'd
+	// stop at every temporary underrun during streaming decode.
+	fullyDecoded := pLen >= pTotal
+	if !scratching && !loopActive && fullyDecoded && (eotReached || d.pos >= pLen) {
 		d.playing.Store(false)
 		d.fade = NewFadeEnvelope(d.sampleRate, 0.01)
 	}
@@ -92,9 +96,11 @@ func (d *Deck) Stream(samples [][2]float32) {
 		d.playing.Store(false)
 	}
 
-	// Update position snapshot for UI (atomic, read by Position())
-	if p.len > 0 {
-		d.storeFloat(&d.posSnapshot, float64(d.pos)/float64(p.len))
+	// Update position snapshot for UI (atomic, read by Position()). Use
+	// the expected total so the playhead doesn't jump while more samples
+	// stream in.
+	if pTotal > 0 {
+		d.storeFloat(&d.posSnapshot, float64(d.pos)/float64(pTotal))
 	}
 
 	d.decayJogVelocities(scratching, scratchVel, pitchOff, n)
@@ -103,7 +109,7 @@ func (d *Deck) Stream(samples [][2]float32) {
 // applyPendingCommands handles reset/fade/seek commands posted from non-audio
 // threads. Must run before any audio processing so subsequent steps see the
 // new state.
-func (d *Deck) applyPendingCommands() {
+func (d *Deck) applyPendingCommands(p *pcmBuffer, pTotal int) {
 	// 1. Reset (LoadTrack completed) — must be first so fade/seek apply to clean state
 	if d.pendingReset.CompareAndSwap(true, false) {
 		d.pos = 0
@@ -124,31 +130,38 @@ func (d *Deck) applyPendingCommands() {
 	}
 
 	// 3. Seek (CAS to avoid clearing a newer seek that arrived between load and swap)
-	p := d.pcm.Load()
-	if p == nil {
+	if p == nil || pTotal == 0 {
 		return
 	}
 	seekBits := d.pendingSeek.Load()
 	seekVal := math.Float64frombits(seekBits)
-	if !math.IsNaN(seekVal) {
-		if d.pendingSeek.CompareAndSwap(seekBits, math.Float64bits(math.NaN())) {
-			newPos := int(seekVal * float64(p.len))
-			if newPos < 0 {
-				newPos = 0
-			}
-			if newPos >= p.len {
-				newPos = p.len - 1
-			}
-			d.pos = newPos
-			d.fpos = float64(newPos)
-		}
+	if math.IsNaN(seekVal) {
+		return
 	}
+	if !d.pendingSeek.CompareAndSwap(seekBits, math.Float64bits(math.NaN())) {
+		return
+	}
+	// Seek targets are normalized against the expected total — that's what
+	// the UI and cue-point storage use. Clamp to what's actually decoded so
+	// the audio thread never reads past the current buffer tail.
+	newPos := int(seekVal * float64(pTotal))
+	if newPos < 0 {
+		newPos = 0
+	}
+	pLen := p.Len()
+	if pLen > 0 && newPos >= pLen {
+		newPos = pLen - 1
+	}
+	d.pos = newPos
+	d.fpos = float64(newPos)
 }
 
 // snapshotLoopBounds reads the loop atomics once per Stream() call and turns
 // the normalized 0..1 boundaries into absolute sample indices. Loops are
 // suppressed while scratching: the user is manually positioning the platter.
-func (d *Deck) snapshotLoopBounds(p *pcmBuffer, scratching bool) (active bool, startSamples, endSamples float64) {
+// Loop positions are normalized against the expected total track length so
+// they stay anchored to the same audio position as decoding progresses.
+func (d *Deck) snapshotLoopBounds(pTotal int, scratching bool) (active bool, startSamples, endSamples float64) {
 	active = d.loopActive.Load() && !scratching
 	if !active {
 		return false, 0, 0
@@ -158,10 +171,10 @@ func (d *Deck) snapshotLoopBounds(p *pcmBuffer, scratching bool) (active bool, s
 	if math.IsNaN(ls) || math.IsNaN(le) || le <= ls {
 		return false, 0, 0
 	}
-	startSamples = ls * float64(p.len)
-	endSamples = le * float64(p.len)
-	if endSamples > float64(p.len) {
-		endSamples = float64(p.len)
+	startSamples = ls * float64(pTotal)
+	endSamples = le * float64(pTotal)
+	if endSamples > float64(pTotal) {
+		endSamples = float64(pTotal)
 	}
 	if endSamples <= startSamples {
 		return false, 0, 0
@@ -171,8 +184,9 @@ func (d *Deck) snapshotLoopBounds(p *pcmBuffer, scratching bool) (active bool, s
 
 // fillUnitTempo is the fast path: tempo == 1.0, direct buffer copy. When a
 // loop is active the copy is split at the loop end so wrapping is sample-
-// accurate even if the loop is shorter than one block.
-func (d *Deck) fillUnitTempo(samples [][2]float32, p *pcmBuffer, loopActive bool, loopStartSamples, loopEndSamples float64) (eot bool) {
+// accurate even if the loop is shorter than one block. pLen is the count
+// of samples actually decoded — reading beyond it is not safe.
+func (d *Deck) fillUnitTempo(samples [][2]float32, p *pcmBuffer, pLen int, loopActive bool, loopStartSamples, loopEndSamples float64) (eot bool) {
 	n := len(samples)
 	i := 0
 	for i < n {
@@ -183,13 +197,13 @@ func (d *Deck) fillUnitTempo(samples [][2]float32, p *pcmBuffer, loopActive bool
 			}
 		}
 		startIdx := int(d.fpos)
-		if startIdx >= p.len {
+		if startIdx >= pLen {
 			for j := i; j < n; j++ {
 				samples[j] = [2]float32{}
 			}
 			return true
 		}
-		capIdx := p.len
+		capIdx := pLen
 		if loopActive {
 			if le := int(loopEndSamples); le < capIdx {
 				capIdx = le
@@ -222,7 +236,7 @@ func (d *Deck) fillUnitTempo(samples [][2]float32, p *pcmBuffer, loopActive bool
 // bend) and reverse (tempo < 0, only reachable while scratching). The loop
 // wrap is checked once per output sample, which is trivial compared to the
 // interpolation itself.
-func (d *Deck) fillTempoInterpolated(samples [][2]float32, p *pcmBuffer, tempo float64, loopActive bool, loopStartSamples, loopEndSamples float64) {
+func (d *Deck) fillTempoInterpolated(samples [][2]float32, p *pcmBuffer, pLen int, tempo float64, loopActive bool, loopStartSamples, loopEndSamples float64) {
 	n := len(samples)
 	for i := 0; i < n; i++ {
 		if loopActive && d.fpos >= loopEndSamples {
@@ -232,7 +246,7 @@ func (d *Deck) fillTempoInterpolated(samples [][2]float32, p *pcmBuffer, tempo f
 			}
 		}
 		idx := int(math.Floor(d.fpos))
-		if idx < 0 || idx >= p.len-1 {
+		if idx < 0 || idx >= pLen-1 {
 			samples[i] = [2]float32{}
 		} else {
 			frac := float32(d.fpos - float64(idx))
@@ -273,38 +287,3 @@ func (d *Deck) decayJogVelocities(scratching bool, scratchVel, pitchOff float64,
 	}
 }
 
-func (d *Deck) generateWaveform() {
-	p := d.pcm.Load()
-	if p == nil {
-		return
-	}
-	track := d.track.Load()
-
-	// Try the on-disk cache first — regenerating the FFT-per-chunk peaks
-	// for a full track is seconds of wall time, but reading the blob back
-	// is microseconds.
-	if d.wfCache != nil && track != nil && track.ID != "" {
-		if cached, ok := d.wfCache.GetWaveform(track.ID, d.sampleRate, track.FileMtime); ok && cached != nil {
-			d.waveform.Store(cached)
-			d.bus.PublishAsync(event.Event{
-				Topic: event.TopicEngine, Action: event.ActionWaveformReady,
-				DeckID: d.id, Payload: cached,
-			})
-			return
-		}
-	}
-
-	data := GenerateWaveformFromPCM(p.samples, d.sampleRate)
-	d.waveform.Store(data)
-	d.bus.PublishAsync(event.Event{
-		Topic: event.TopicEngine, Action: event.ActionWaveformReady,
-		DeckID: d.id, Payload: data,
-	})
-
-	// Write back to the cache so the next load of this track is instant.
-	if d.wfCache != nil && track != nil && track.ID != "" {
-		if err := d.wfCache.PutWaveform(track.ID, data, track.FileMtime); err != nil {
-			log.Printf("deck %d: cache waveform: %v", d.id, err)
-		}
-	}
-}

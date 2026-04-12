@@ -85,14 +85,18 @@ func (d *Deck) SamplesPerBeat() float64 {
 // is available.
 func (d *Deck) NearestBeatBefore(pos float64) float64 {
 	p := d.pcm.Load()
-	if p == nil || p.len == 0 {
+	if p == nil {
+		return pos
+	}
+	pTotal := p.Total()
+	if pTotal == 0 {
 		return pos
 	}
 	t := d.track.Load()
 	if t == nil {
 		return pos
 	}
-	totalSeconds := float64(p.len) / float64(d.sampleRate)
+	totalSeconds := float64(pTotal) / float64(d.sampleRate)
 	if totalSeconds <= 0 {
 		return pos
 	}

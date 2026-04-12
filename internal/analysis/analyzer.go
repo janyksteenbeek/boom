@@ -93,27 +93,30 @@ func (s *Service) subscribeEvents() {
 		return nil
 	})
 
-	// Auto-analyze on deck load
+	// Auto-analyze on deck load — fires on ActionTrackDecoded (not
+	// TrackLoaded) so we get a reference to the deck's fully-decoded PCM
+	// buffer and avoid a second file decode pass in the analysis worker.
 	s.bus.Subscribe(event.TopicEngine, func(ev event.Event) error {
-		if ev.Action != event.ActionTrackLoaded {
+		if ev.Action != event.ActionTrackDecoded {
 			return nil
 		}
 		if !s.cfg.AutoAnalyzeOnDeckLoad {
 			return nil
 		}
-		track, ok := ev.Payload.(*model.Track)
-		if !ok || track == nil {
+		payload, ok := ev.Payload.(*event.TrackDecodedPayload)
+		if !ok || payload == nil || payload.Track == nil {
 			return nil
 		}
+		track := payload.Track
 		// Skip if already analyzed
 		if track.BPM > 0 && track.Key != "" {
 			return nil
 		}
-		// We need to get the PCM from the engine's deck, but we don't have
-		// direct access here. Submit as file-based analysis instead.
 		go s.submitJob(analysisJob{
-			track:  *track,
-			deckID: ev.DeckID,
+			track:      *track,
+			samples:    payload.Samples,
+			sampleRate: payload.SampleRate,
+			deckID:     ev.DeckID,
 		})
 		return nil
 	})
