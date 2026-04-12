@@ -22,7 +22,7 @@ type BPMRangePreset struct {
 	Max   float64
 }
 
-// BPMRangePresets are the available presets, matching Rekordbox-style options.
+// BPMRangePresets are the available presets.
 var BPMRangePresets = []BPMRangePreset{
 	{"Normal (78–180)", 78, 180},
 	{"Wide (60–220)", 60, 220},
@@ -73,17 +73,17 @@ type Config struct {
 }
 
 // JogSettings holds per-app jog wheel preferences. Sensitivities are unitless
-// gains applied to each MIDI encoder tick. Defaults are tuned for the
-// Pioneer DDJ-FLX4; other controllers may want different values.
+// gains applied to each MIDI encoder tick. Defaults are tuned for a typical
+// 4-channel club controller; other hardware may want different values.
 type JogSettings struct {
 	VinylMode          bool    `yaml:"vinyl_mode"`          // top touch enables scratching when true
 	ScratchSensitivity float64 `yaml:"scratch_sensitivity"` // default ~0.4 (vinyl scratch feel)
 	PitchSensitivity   float64 `yaml:"pitch_sensitivity"`   // default ~0.04 (pitch bend nudge)
 }
 
-// LoopSettings holds per-app loop preferences. Mirrors Rekordbox's Loop options:
-// quantize in/out points to the beat grid, auto-beat default length, bounds
-// for halve/double, and "smart loop" handling near track boundaries.
+// LoopSettings holds per-app loop preferences: quantize in/out points to the
+// beat grid, auto-beat default length, bounds for halve/double, and "smart
+// loop" handling near track boundaries.
 type LoopSettings struct {
 	Quantize        bool    `yaml:"quantize"`         // snap loop in/out to beat grid
 	DefaultBeatLoop float64 `yaml:"default_beat_loop"` // beats (default 4)

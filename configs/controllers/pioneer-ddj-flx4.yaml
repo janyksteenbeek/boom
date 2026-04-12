@@ -1,5 +1,4 @@
-# Boom DJ — Pioneer DDJ-FLX4 MIDI Controller Mapping
-# Verified against DJay Pro 5.4.4 plist config
+# Boom DJ — 4-channel club controller MIDI mapping
 # midiMessageType: 1=NoteOn/Off, 3=CC
 # midiChannel: 0-indexed (0=deck1, 1=deck2, 6=global)
 
@@ -40,7 +39,7 @@ deck_channels:
     cc: 0xB1     # CC ch1
 
 decks:
-  # ─── TRANSPORT (DJay Pro verified) ─────────────────
+  # ─── TRANSPORT ─────────────────────────────────────
   transport:
     - name: play_pause
       type: button
@@ -66,7 +65,7 @@ decks:
         shift:
           action: vinyl_mode
 
-  # ─── JOG WHEEL (DJay Pro verified) ─────────────────
+  # ─── JOG WHEEL ─────────────────────────────────────
   jog:
     - name: jog_touch
       type: button
@@ -91,7 +90,7 @@ decks:
       action: jog_pitch
       encoder: { mode: relative_offset, sensitivity: 0.3 }
 
-  # ─── LOOPS (DJay Pro verified) ─────────────────────
+  # ─── LOOPS ─────────────────────────────────────────
   loops:
     - name: loop_in
       type: button
@@ -120,7 +119,7 @@ decks:
       midi: { status: note, number: 83 }    # ch0/1 Note 83 = loop 2x call
       action: loop_double
 
-  # ─── PERFORMANCE PADS (ch7=deck1, ch9=deck2 per DJay) ──
+  # ─── PERFORMANCE PADS (ch7=deck1, ch9=deck2 on hardware) ──
   # NOTE: Pads use different MIDI channels than the deck channels
   # For now we map them on the deck channels; pad channel support comes later
   pads:
@@ -131,7 +130,7 @@ decks:
       action: "hotcue_{{n}}"
       led: { status: note, number_start: 0, number_step: 1, on_value: 0x7F, off_value: 0x00 }
 
-  # ─── FADERS & KNOBS (DJay Pro verified) ────────────
+  # ─── FADERS & KNOBS ────────────────────────────────
   faders:
     - name: volume
       type: fader

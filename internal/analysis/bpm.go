@@ -211,8 +211,8 @@ func autocorrelateBPM(envelope []float64, onsetRate float64) float64 {
 }
 
 // snapToDJRange doubles or halves the BPM until it falls within the
-// preferred DJ range. This is standard behavior in Rekordbox, Traktor,
-// and Serato — a detected 63 BPM is reported as 126.
+// preferred DJ range. Standard behavior in DJ software — a detected 63 BPM
+// is reported as 126.
 func snapToDJRange(bpm, rangeMin, rangeMax float64) float64 {
 	if bpm <= 0 {
 		return 0

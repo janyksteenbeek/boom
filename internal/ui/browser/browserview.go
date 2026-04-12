@@ -159,8 +159,8 @@ func (b *BrowserView) subscribeEvents() {
 	b.bus.Subscribe(event.TopicLibrary, func(ev event.Event) error {
 		switch ev.Action {
 		case event.ActionBrowseScroll:
-			// Hardware sends positive for CCW on the Pioneer library rotary;
-			// invert so CW advances to the next item.
+			// Library rotary sends positive for CCW; invert so CW advances
+			// to the next item.
 			delta := -int(ev.Value)
 			if delta == 0 {
 				return nil

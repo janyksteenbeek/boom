@@ -1,10 +1,7 @@
 package app
 
 import (
-	"fmt"
 	"log"
-	"math"
-	"time"
 
 	"github.com/janyksteenbeek/boom/internal/analysis"
 	"github.com/janyksteenbeek/boom/internal/audio"
@@ -48,8 +45,6 @@ func New() (*App, error) {
 		return nil, err
 	}
 	lib := library.NewLibrary(bus, store)
-
-	// Analysis service
 	analyzer := analysis.NewService(bus, store, cfg)
 
 	engine, err := audio.NewEngine(bus, cfg.SampleRate, cfg.BufferSize,
@@ -58,72 +53,13 @@ func New() (*App, error) {
 		store.Close()
 		return nil, err
 	}
-	engine.SetAutoCue(cfg.AutoCue)
-	engine.SetLoopOptions(audio.LoopOptions{
-		Quantize:        cfg.Loop.Quantize,
-		DefaultBeatLoop: cfg.Loop.DefaultBeatLoop,
-		MinBeats:        cfg.Loop.MinBeats,
-		MaxBeats:        cfg.Loop.MaxBeats,
-		SmartLoop:       cfg.Loop.SmartLoop,
-	})
-	engine.SetJogOptions(audio.JogOptions{
-		VinylMode:          cfg.Jog.VinylMode,
-		ScratchSensitivity: cfg.Jog.ScratchSensitivity,
-		PitchSensitivity:   cfg.Jog.PitchSensitivity,
-	})
+	applyEngineSettings(engine, cfg)
 
 	midiMgr := boomidi.NewManager(bus)
 
-	// Controller mapping
-	loader := controller.NewLoader(cfg.MIDIMappingDir)
-	if err := loader.LoadAll(); err != nil {
-		log.Printf("controller configs: %v", err)
-	}
-
-	registry := controller.NewActionRegistry()
-	registerActions(registry, bus)
-
-	// LED manager — sends MIDI output to controller
-	ledMgr := controller.NewLEDManager(func(status, data1, data2 uint8) {
-		if err := midiMgr.SendMIDI(status, data1, data2); err != nil {
-			// Silently ignore send errors (controller may not be connected)
-		}
-	})
-
-	// Compile first available controller config
-	for name, ctrlCfg := range loader.All() {
-		compiled, err := controller.Compile(*ctrlCfg)
-		if err != nil {
-			log.Printf("compile controller %s: %v", name, err)
-			continue
-		}
-
-		mapper := controller.NewMapper(compiled, registry)
-		midiMgr.SetMapper(mapper)
-
-		// Register LED bindings from the compiled mapping
-		for _, b := range compiled.LEDBindings {
-			ledMgr.AddBinding(b)
-		}
-		midiMgr.SetLEDManager(ledMgr)
-
-		log.Printf("controller active: %s (%d LED bindings)", name, len(compiled.LEDBindings))
-		break
-	}
-
-	// Hot-reload
-	loader.OnReload(func(name string, ctrlCfg *controller.ControllerConfig) {
-		compiled, err := controller.Compile(*ctrlCfg)
-		if err != nil {
-			log.Printf("hot-reload compile %s: %v", name, err)
-			return
-		}
-		mapper := controller.NewMapper(compiled, registry)
-		midiMgr.SetMapper(mapper)
-		log.Printf("hot-reloaded controller: %s", name)
-	})
-	if err := loader.Watch(); err != nil {
-		log.Printf("controller watch: %v", err)
+	loader, ledMgr, err := setupController(cfg, bus, midiMgr)
+	if err != nil {
+		log.Printf("controller setup: %v", err)
 	}
 
 	window := ui.NewWindow(bus, cfg)
@@ -154,66 +90,8 @@ func New() (*App, error) {
 		stopCh:   make(chan struct{}),
 	}
 
-	// Wire DB persistence for cue point changes. Play/cue LED state is driven
-	// by ledFeedbackLoop because both can be in a blinking state — event-based
-	// updates can't express that.
-	bus.Subscribe(event.TopicEngine, func(ev event.Event) error {
-		if ev.Action != event.ActionCuePointChanged {
-			return nil
-		}
-		trackID, _ := ev.Payload.(string)
-		if trackID == "" {
-			return nil
-		}
-		pos := ev.Value
-		go func() {
-			if err := store.UpdateCuePoint(trackID, pos); err != nil {
-				log.Printf("cue: persist failed for %s: %v", trackID, err)
-			}
-		}()
-		return nil
-	})
-
-	// Wire settings save: rescan library when music dirs change
-	window.OnSettingsSave(func(updatedCfg *config.Config) {
-		log.Printf("settings saved, rescanning music dirs: %v", updatedCfg.MusicDirs)
-		engine.SetAutoCue(updatedCfg.AutoCue)
-		engine.SetLoopOptions(audio.LoopOptions{
-			Quantize:        updatedCfg.Loop.Quantize,
-			DefaultBeatLoop: updatedCfg.Loop.DefaultBeatLoop,
-			MinBeats:        updatedCfg.Loop.MinBeats,
-			MaxBeats:        updatedCfg.Loop.MaxBeats,
-			SmartLoop:       updatedCfg.Loop.SmartLoop,
-		})
-		engine.SetJogOptions(audio.JogOptions{
-			VinylMode:          updatedCfg.Jog.VinylMode,
-			ScratchSensitivity: updatedCfg.Jog.ScratchSensitivity,
-			PitchSensitivity:   updatedCfg.Jog.PitchSensitivity,
-		})
-		go func() {
-			app.library.ScanDirs(updatedCfg.MusicDirs)
-			tracks, err := app.library.AllTracks(0, 500)
-			if err == nil {
-				app.window.Browser().SetTracks(tracks)
-			}
-			genres, err := app.library.Genres()
-			if err == nil {
-				app.window.Browser().SetGenres(genres)
-			}
-
-			// Auto-analyze on import if enabled
-			if updatedCfg.AutoAnalyzeOnImport {
-				unanalyzed, err := app.store.UnanalyzedTracks(500)
-				if err == nil && len(unanalyzed) > 0 {
-					app.bus.PublishAsync(event.Event{
-						Topic:   event.TopicAnalysis,
-						Action:  event.ActionAnalyzeRequest,
-						Payload: unanalyzed,
-					})
-				}
-			}
-		}()
-	})
+	app.subscribeCuePersistence()
+	app.wireSettingsSave()
 
 	return app, nil
 }
@@ -242,13 +120,10 @@ func (a *App) Run() {
 		a.window.Browser().SetGenres(genres)
 	}()
 
-	// Start VU meter + LED feedback output to controller
 	go a.vuMeterLoop()
 	go a.ledFeedbackLoop()
 
-	// Run UI (blocks)
 	a.window.Run()
-
 	a.shutdown()
 }
 
@@ -260,477 +135,132 @@ func (a *App) shutdown() {
 	a.analyzer.Stop()
 	a.engine.Stop()
 	a.midi.Stop()
-	a.loader.Close()
+	if a.loader != nil {
+		a.loader.Close()
+	}
 	a.library.Close()
 }
 
-// ledFeedbackLoop drives the per-deck PLAY and CUE LEDs in Pioneer-style
-// state mapping with software blink:
-//
-//	no track             → both OFF
-//	playing              → PLAY solid, CUE OFF
-//	cue_preview          → PLAY OFF,   CUE solid
-//	paused at eff. cue   → PLAY blink, CUE solid
-//	paused away from cue → PLAY blink, CUE blink
-//
-// PLAY blinks at 1 Hz (~500 ms period) when the deck is paused — this is the
-// "ready to play" indicator. CUE blinks at 2 Hz (~250 ms period) when paused
-// away from the cue — a faster "press to (re)cue here" invitation that's
-// visually distinct from PLAY. The loop polls at 50 ms and only sends MIDI on
-// edge transitions to keep controller traffic low.
-func (a *App) ledFeedbackLoop() {
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
-
-	var lastPlay, lastCue [audio.NumDecks]bool
-	var lastLoopIn, lastLoopOut [audio.NumDecks]bool
-	var initialized [audio.NumDecks]bool
-
-	for {
-		select {
-		case <-a.stopCh:
-			return
-		case <-ticker.C:
-			ms := time.Now().UnixMilli()
-			playBlink := (ms/500)%2 == 0 // 1 Hz
-			cueBlink := (ms/250)%2 == 0  // 2 Hz
-			for i := 0; i < audio.NumDecks; i++ {
-				deck := a.engine.Deck(i + 1)
-				if deck == nil {
-					continue
-				}
-				hasTrack := deck.Track() != nil
-				playing := deck.IsPlaying()
-				preview := deck.CuePreview()
-				atCue := deck.AtEffectiveCue()
-
-				var playOn, cueOn bool
-				switch {
-				case !hasTrack:
-					playOn = false
-				case preview:
-					playOn = false
-				case playing:
-					playOn = true
-				default:
-					playOn = playBlink
-				}
-
-				switch {
-				case !hasTrack:
-					cueOn = false
-				case preview:
-					cueOn = true
-				case playing:
-					cueOn = false
-				case atCue:
-					cueOn = true
-				default:
-					cueOn = cueBlink
-				}
-
-				if !initialized[i] || playOn != lastPlay[i] {
-					lastPlay[i] = playOn
-					a.ledMgr.Update("play_pause", i+1, playOn)
-				}
-				if !initialized[i] || cueOn != lastCue[i] {
-					lastCue[i] = cueOn
-					a.ledMgr.Update("cue", i+1, cueOn)
-				}
-
-				// Loop IN: solid when a full loop is stored/active, flashing
-				// while the user is "recording" (start set but no end yet),
-				// off otherwise. Loop OUT: solid only while the loop is
-				// actually wrapping playback. Matches DDJ-FLX4 / Rekordbox.
-				var loopInOn bool
-				switch {
-				case !hasTrack:
-					loopInOn = false
-				case deck.HasLoop():
-					loopInOn = true
-				case !isNaN(deck.LoopStart()):
-					loopInOn = cueBlink // 2 Hz flash while recording
-				}
-				loopOutOn := hasTrack && deck.IsLoopActive()
-
-				if !initialized[i] || loopInOn != lastLoopIn[i] {
-					lastLoopIn[i] = loopInOn
-					a.ledMgr.Update("loop_in", i+1, loopInOn)
-				}
-				if !initialized[i] || loopOutOn != lastLoopOut[i] {
-					lastLoopOut[i] = loopOutOn
-					a.ledMgr.Update("loop_out", i+1, loopOutOn)
-				}
-
-				initialized[i] = true
-			}
-		}
-	}
+// applyEngineSettings pushes the relevant config sections into the engine.
+// Called on startup and again whenever the user saves the settings dialog.
+func applyEngineSettings(engine *audio.Engine, cfg *config.Config) {
+	engine.SetAutoCue(cfg.AutoCue)
+	engine.SetLoopOptions(audio.LoopOptions{
+		Quantize:        cfg.Loop.Quantize,
+		DefaultBeatLoop: cfg.Loop.DefaultBeatLoop,
+		MinBeats:        cfg.Loop.MinBeats,
+		MaxBeats:        cfg.Loop.MaxBeats,
+		SmartLoop:       cfg.Loop.SmartLoop,
+	})
+	engine.SetJogOptions(audio.JogOptions{
+		VinylMode:          cfg.Jog.VinylMode,
+		ScratchSensitivity: cfg.Jog.ScratchSensitivity,
+		PitchSensitivity:   cfg.Jog.PitchSensitivity,
+	})
 }
 
-// vuMeterLoop sends VU meter levels to the DDJ-FLX4 at ~20Hz.
-// The DDJ-FLX4 expects CC 2 on ch0/ch1 with values 37-123.
-func (a *App) vuMeterLoop() {
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-a.stopCh:
-			return
-		case <-ticker.C:
-			for i := 0; i < 2; i++ {
-				deck := a.engine.Deck(i + 1)
-				if deck == nil {
-					continue
-				}
-				var vuValue uint8
-				if deck.IsPlaying() {
-					vuValue = 80 // Mid-level when playing (will be replaced with real RMS later)
-				} else {
-					vuValue = 37 // Minimum = off
-				}
-				channel := uint8(i) // ch0 for deck1, ch1 for deck2
-				_ = a.midi.SendMIDI(0xB0|channel, 2, vuValue)
-			}
-		}
+// setupController loads MIDI mappings, builds the action registry/LED manager,
+// compiles the first available controller config, and installs a hot-reload
+// hook so YAML edits get picked up live.
+func setupController(cfg *config.Config, bus *event.Bus, midiMgr *boomidi.Manager) (*controller.Loader, *controller.LEDManager, error) {
+	loader := controller.NewLoader(cfg.MIDIMappingDir)
+	if err := loader.LoadAll(); err != nil {
+		log.Printf("controller configs: %v", err)
 	}
+
+	registry := controller.NewActionRegistry()
+	registerActions(registry, bus)
+
+	ledMgr := controller.NewLEDManager(func(status, data1, data2 uint8) {
+		// Silently ignore send errors (controller may not be connected)
+		_ = midiMgr.SendMIDI(status, data1, data2)
+	})
+
+	for name, ctrlCfg := range loader.All() {
+		compiled, err := controller.Compile(*ctrlCfg)
+		if err != nil {
+			log.Printf("compile controller %s: %v", name, err)
+			continue
+		}
+
+		mapper := controller.NewMapper(compiled, registry)
+		midiMgr.SetMapper(mapper)
+
+		for _, b := range compiled.LEDBindings {
+			ledMgr.AddBinding(b)
+		}
+		midiMgr.SetLEDManager(ledMgr)
+
+		log.Printf("controller active: %s (%d LED bindings)", name, len(compiled.LEDBindings))
+		break
+	}
+
+	loader.OnReload(func(name string, ctrlCfg *controller.ControllerConfig) {
+		compiled, err := controller.Compile(*ctrlCfg)
+		if err != nil {
+			log.Printf("hot-reload compile %s: %v", name, err)
+			return
+		}
+		mapper := controller.NewMapper(compiled, registry)
+		midiMgr.SetMapper(mapper)
+		log.Printf("hot-reloaded controller: %s", name)
+	})
+	if err := loader.Watch(); err != nil {
+		log.Printf("controller watch: %v", err)
+	}
+
+	return loader, ledMgr, nil
 }
 
-func isNaN(f float64) bool { return math.IsNaN(f) }
-
-// registerActions maps standard DJ actions to event bus events.
-func registerActions(registry *controller.ActionRegistry, bus *event.Bus) {
-	// Deck trigger actions (press-only — fire once per push)
-	for _, action := range []string{
-		event.ActionPlayPause, event.ActionPlay, event.ActionPause,
-		event.ActionSync,
-		event.ActionLoopIn, event.ActionLoopOut, event.ActionLoopToggle,
-		event.ActionLoopHalve, event.ActionLoopDouble,
-	} {
-		a := action
-		registry.Register(a, controller.ActionDescriptor{
-			Name: a, Type: controller.ActionTypeTrigger,
-		}, func(ctx controller.ActionContext) {
-			if !ctx.Pressed {
-				return
+// subscribeCuePersistence persists cue point changes to the database. Play and
+// cue LED state is driven by ledFeedbackLoop instead because both can be in a
+// blinking state — event-based updates can't express that.
+func (a *App) subscribeCuePersistence() {
+	a.bus.Subscribe(event.TopicEngine, func(ev event.Event) error {
+		if ev.Action != event.ActionCuePointChanged {
+			return nil
+		}
+		trackID, _ := ev.Payload.(string)
+		if trackID == "" {
+			return nil
+		}
+		pos := ev.Value
+		go func() {
+			if err := a.store.UpdateCuePoint(trackID, pos); err != nil {
+				log.Printf("cue: persist failed for %s: %v", trackID, err)
 			}
-			log.Printf("MIDI action: %s deck=%d", a, ctx.Deck)
-			bus.Publish(event.Event{
-				Topic:  event.TopicDeck,
-				Action: a,
-				DeckID: ctx.Deck,
-			})
-		})
-	}
-
-	// CUE: needs both press AND release for hold-to-preview / cue-release latch
-	registry.Register(event.ActionCue, controller.ActionDescriptor{
-		Name: event.ActionCue, Type: controller.ActionTypeTrigger,
-	}, func(ctx controller.ActionContext) {
-		bus.Publish(event.Event{
-			Topic:   event.TopicDeck,
-			Action:  event.ActionCue,
-			DeckID:  ctx.Deck,
-			Pressed: ctx.Pressed,
-		})
+		}()
+		return nil
 	})
+}
 
-	// CUE delete (Rekordbox-style memory cue removal). Press-only.
-	registry.Register(event.ActionCueDelete, controller.ActionDescriptor{
-		Name: event.ActionCueDelete, Type: controller.ActionTypeTrigger,
-	}, func(ctx controller.ActionContext) {
-		if !ctx.Pressed {
-			return
-		}
-		bus.Publish(event.Event{
-			Topic:  event.TopicDeck,
-			Action: event.ActionCueDelete,
-			DeckID: ctx.Deck,
-		})
-	})
-
-	// SHIFT + CUE: jump to track start, paused. Press-only.
-	registry.Register(event.ActionCueGoStart, controller.ActionDescriptor{
-		Name: event.ActionCueGoStart, Type: controller.ActionTypeTrigger,
-	}, func(ctx controller.ActionContext) {
-		if !ctx.Pressed {
-			return
-		}
-		bus.Publish(event.Event{
-			Topic:  event.TopicDeck,
-			Action: event.ActionCueGoStart,
-			DeckID: ctx.Deck,
-		})
-	})
-
-	// Continuous deck actions
-	for _, action := range []string{
-		event.ActionVolumeChange, event.ActionTempoChange,
-		event.ActionEQHigh, event.ActionEQMid, event.ActionEQLow,
-		event.ActionGainChange,
-	} {
-		a := action
-		registry.Register(a, controller.ActionDescriptor{
-			Name: a, Type: controller.ActionTypeContinuous,
-		}, func(ctx controller.ActionContext) {
-			bus.Publish(event.Event{
-				Topic:  event.TopicDeck,
-				Action: a,
-				DeckID: ctx.Deck,
-				Value:  ctx.Value,
-			})
-		})
-	}
-
-	// Action name aliases (YAML action names -> event bus actions)
-	actionAliases := map[string]string{
-		"volume":  event.ActionVolumeChange,
-		"tempo":   event.ActionTempoChange,
-		"eq_high": event.ActionEQHigh,
-		"eq_mid":  event.ActionEQMid,
-		"eq_low":  event.ActionEQLow,
-		"gain":    event.ActionGainChange,
-	}
-	for alias, target := range actionAliases {
-		t := target
-		registry.Register(alias, controller.ActionDescriptor{
-			Name: alias, Type: controller.ActionTypeContinuous,
-		}, func(ctx controller.ActionContext) {
-			bus.Publish(event.Event{
-				Topic:  event.TopicDeck,
-				Action: t,
-				DeckID: ctx.Deck,
-				Value:  ctx.Value,
-			})
-		})
-	}
-
-	// Relative actions (jog wheel)
-	for _, action := range []string{event.ActionJogScratch, event.ActionJogPitch} {
-		a := action
-		registry.Register(a, controller.ActionDescriptor{
-			Name: a, Type: controller.ActionTypeRelative,
-		}, func(ctx controller.ActionContext) {
-			bus.Publish(event.Event{
-				Topic:  event.TopicDeck,
-				Action: a,
-				DeckID: ctx.Deck,
-				Value:  ctx.Delta,
-			})
-		})
-	}
-
-	// jog_touch: trigger with press AND release — release matters for
-	// snapping back to the captured play state in vinyl mode.
-	registry.Register(event.ActionJogTouch, controller.ActionDescriptor{
-		Name: event.ActionJogTouch, Type: controller.ActionTypeTrigger,
-	}, func(ctx controller.ActionContext) {
-		bus.Publish(event.Event{
-			Topic:   event.TopicDeck,
-			Action:  event.ActionJogTouch,
-			DeckID:  ctx.Deck,
-			Pressed: ctx.Pressed,
-		})
-	})
-
-	// vinyl_mode: press-only toggle.
-	registry.Register(event.ActionVinylMode, controller.ActionDescriptor{
-		Name: event.ActionVinylMode, Type: controller.ActionTypeTrigger,
-	}, func(ctx controller.ActionContext) {
-		if !ctx.Pressed {
-			return
-		}
-		bus.Publish(event.Event{
-			Topic:  event.TopicDeck,
-			Action: event.ActionVinylMode,
-			DeckID: ctx.Deck,
-		})
-	})
-
-	// Mixer actions
-	registry.Register(event.ActionCrossfader, controller.ActionDescriptor{
-		Name: event.ActionCrossfader, Type: controller.ActionTypeContinuous,
-	}, func(ctx controller.ActionContext) {
-		bus.Publish(event.Event{
-			Topic:  event.TopicMixer,
-			Action: event.ActionCrossfader,
-			Value:  ctx.Value,
-		})
-	})
-
-	registry.Register(event.ActionMasterVolume, controller.ActionDescriptor{
-		Name: event.ActionMasterVolume, Type: controller.ActionTypeContinuous,
-	}, func(ctx controller.ActionContext) {
-		bus.Publish(event.Event{
-			Topic:  event.TopicMixer,
-			Action: event.ActionMasterVolume,
-			Value:  ctx.Value,
-		})
-	})
-
-	registry.Register(event.ActionCueVolume, controller.ActionDescriptor{
-		Name: event.ActionCueVolume, Type: controller.ActionTypeContinuous,
-	}, func(ctx controller.ActionContext) {
-		bus.Publish(event.Event{
-			Topic:  event.TopicMixer,
-			Action: event.ActionCueVolume,
-			Value:  ctx.Value,
-		})
-	})
-
-	// Library actions
-	registry.Register(event.ActionBrowseScroll, controller.ActionDescriptor{
-		Name: event.ActionBrowseScroll, Type: controller.ActionTypeRelative,
-	}, func(ctx controller.ActionContext) {
-		bus.Publish(event.Event{
-			Topic:  event.TopicLibrary,
-			Action: event.ActionBrowseScroll,
-			Value:  ctx.Delta,
-		})
-	})
-
-	registry.Register(event.ActionBrowseSelect, controller.ActionDescriptor{
-		Name: event.ActionBrowseSelect, Type: controller.ActionTypeTrigger,
-	}, func(ctx controller.ActionContext) {
-		if !ctx.Pressed {
-			return
-		}
-		bus.Publish(event.Event{
-			Topic:  event.TopicLibrary,
-			Action: event.ActionBrowseSelect,
-		})
-	})
-
-	// Load track to specific deck (from global buttons on ch6)
-	registry.Register("load_track_1", controller.ActionDescriptor{
-		Name: "load_track_1", Type: controller.ActionTypeTrigger,
-	}, func(ctx controller.ActionContext) {
-		if !ctx.Pressed {
-			return
-		}
-		bus.Publish(event.Event{
-			Topic:  event.TopicDeck,
-			Action: event.ActionLoadTrack,
-			DeckID: 1,
-		})
-	})
-
-	registry.Register("load_track_2", controller.ActionDescriptor{
-		Name: "load_track_2", Type: controller.ActionTypeTrigger,
-	}, func(ctx controller.ActionContext) {
-		if !ctx.Pressed {
-			return
-		}
-		bus.Publish(event.Event{
-			Topic:  event.TopicDeck,
-			Action: event.ActionLoadTrack,
-			DeckID: 2,
-		})
-	})
-
-	// Beat FX actions (DeckID: 0=master, 1=deck1, 2=deck2)
-	registry.Register(event.ActionFXSelect, controller.ActionDescriptor{
-		Name: event.ActionFXSelect, Type: controller.ActionTypeTrigger,
-	}, func(ctx controller.ActionContext) {
-		if !ctx.Pressed {
-			return
-		}
-		bus.Publish(event.Event{
-			Topic:  event.TopicDeck,
-			Action: event.ActionFXSelect,
-			DeckID: ctx.Deck,
-			Value:  ctx.Value,
-		})
-	})
-
-	registry.Register(event.ActionFXActivate, controller.ActionDescriptor{
-		Name: event.ActionFXActivate, Type: controller.ActionTypeTrigger,
-	}, func(ctx controller.ActionContext) {
-		if !ctx.Pressed {
-			return
-		}
-		deckID := ctx.Deck
-		if deckID == 0 {
-			deckID = event.DeckIDUnresolved
-		}
-		bus.Publish(event.Event{
-			Topic:  event.TopicDeck,
-			Action: event.ActionFXActivate,
-			DeckID: deckID,
-			Value:  1.0,
-		})
-	})
-
-	registry.Register(event.ActionFXNext, controller.ActionDescriptor{
-		Name: event.ActionFXNext, Type: controller.ActionTypeTrigger,
-	}, func(ctx controller.ActionContext) {
-		if !ctx.Pressed {
-			return
-		}
-		bus.Publish(event.Event{
-			Topic:  event.TopicDeck,
-			Action: event.ActionFXNext,
-			DeckID: ctx.Deck,
-		})
-	})
-
-	for _, action := range []string{
-		event.ActionFXWetDry, event.ActionFXTime,
-	} {
-		a := action
-		registry.Register(a, controller.ActionDescriptor{
-			Name: a, Type: controller.ActionTypeContinuous,
-		}, func(ctx controller.ActionContext) {
-			deckID := ctx.Deck
-			// fx_wetdry without a deck context routes via the UI's current
-			// FX target to avoid a publish-loop between window and mixer.
-			if a == event.ActionFXWetDry && deckID == 0 {
-				deckID = event.DeckIDUnresolved
+// wireSettingsSave installs the on-save handler that re-applies the engine
+// settings and rescans the library when the user changes their music dirs.
+func (a *App) wireSettingsSave() {
+	a.window.OnSettingsSave(func(updatedCfg *config.Config) {
+		log.Printf("settings saved, rescanning music dirs: %v", updatedCfg.MusicDirs)
+		applyEngineSettings(a.engine, updatedCfg)
+		go func() {
+			a.library.ScanDirs(updatedCfg.MusicDirs)
+			tracks, err := a.library.AllTracks(0, 500)
+			if err == nil {
+				a.window.Browser().SetTracks(tracks)
 			}
-			bus.Publish(event.Event{
-				Topic:  event.TopicDeck,
-				Action: a,
-				DeckID: deckID,
-				Value:  ctx.Value,
-			})
-		})
-	}
-
-	// beat_loop: parameterized beat-length action. Mappings specify the beat
-	// count in the YAML "value" field; the action registry forwards it via
-	// ctx.Value. Fallback is the engine's configured DefaultBeatLoop.
-	registry.Register(event.ActionBeatLoop, controller.ActionDescriptor{
-		Name: event.ActionBeatLoop, Type: controller.ActionTypeContinuous,
-	}, func(ctx controller.ActionContext) {
-		if !ctx.Pressed && ctx.Value == 0 {
-			return
-		}
-		bus.Publish(event.Event{
-			Topic:  event.TopicDeck,
-			Action: event.ActionBeatLoop,
-			DeckID: ctx.Deck,
-			Value:  ctx.Value,
-		})
-	})
-
-	// Stub actions for things defined in YAML but not yet implemented
-	stubs := []string{
-		"stutter", "headphone_cue",
-		"browse_back",
-	}
-	for i := 1; i <= 8; i++ {
-		stubs = append(stubs, fmt.Sprintf("hotcue_%d", i))
-		stubs = append(stubs, fmt.Sprintf("hotcue_%d_delete", i))
-	}
-	for _, name := range stubs {
-		n := name
-		registry.Register(n, controller.ActionDescriptor{
-			Name: n, Type: controller.ActionTypeTrigger,
-		}, func(ctx controller.ActionContext) {
-			if ctx.Pressed {
-				log.Printf("stub action: %s deck=%d", n, ctx.Deck)
+			genres, err := a.library.Genres()
+			if err == nil {
+				a.window.Browser().SetGenres(genres)
 			}
-		})
-	}
+
+			if updatedCfg.AutoAnalyzeOnImport {
+				unanalyzed, err := a.store.UnanalyzedTracks(500)
+				if err == nil && len(unanalyzed) > 0 {
+					a.bus.PublishAsync(event.Event{
+						Topic:   event.TopicAnalysis,
+						Action:  event.ActionAnalyzeRequest,
+						Payload: unanalyzed,
+					})
+				}
+			}
+		}()
+	})
 }

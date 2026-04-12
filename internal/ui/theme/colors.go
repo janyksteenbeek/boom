@@ -53,7 +53,7 @@ var (
 	ColorBeatLine          = color.RGBA{R: 255, G: 255, B: 255, A: 100} // Beat marker
 	ColorBeatLineStrong    = color.RGBA{R: 255, G: 255, B: 255, A: 200} // Downbeat marker
 
-	// Waveform frequency band colors (Rekordbox-style)
+	// Waveform frequency band colors
 	ColorWaveformLow     = color.RGBA{R: 50, G: 130, B: 255, A: 255}  // Blue (bass)
 	ColorWaveformLowDim  = color.RGBA{R: 30, G: 80, B: 160, A: 140}
 	ColorWaveformMid     = color.RGBA{R: 255, G: 170, B: 40, A: 255}  // Orange (mids)
@@ -81,7 +81,7 @@ var (
 	ColorSyncActive = ColorYellow
 )
 
-// Loop overlay — Rekordbox-style orange fill with visible boundary markers.
+// Loop overlay — orange fill with visible boundary markers.
 var (
 	ColorLoopFill   = color.RGBA{R: 255, G: 159, B: 10, A: 60}  // semi-transparent orange region
 	ColorLoopMarker = color.RGBA{R: 255, G: 159, B: 10, A: 220} // boundary lines
