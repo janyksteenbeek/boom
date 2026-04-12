@@ -94,6 +94,7 @@ func New() (*App, error) {
 
 	app.subscribeCuePersistence()
 	app.subscribePlayTracking()
+	app.subscribeAnalysisHydration()
 	app.wireSettingsSave()
 
 	return app, nil
@@ -232,6 +233,60 @@ func (a *App) subscribeCuePersistence() {
 			if err := a.store.UpdateCuePoint(trackID, pos); err != nil {
 				log.Printf("cue: persist failed for %s: %v", trackID, err)
 			}
+		}()
+		return nil
+	})
+}
+
+// subscribeAnalysisHydration restores cached analysis (beat grid, gain, …)
+// onto a deck right after a track loads.
+//
+// The browser's track list comes from AllTracks()/Search()/etc, which
+// intentionally skip the beat_grid blob so large list queries stay cheap.
+// That means the *model.Track delivered via ActionLoadTrack has BPM+Key
+// populated but BeatGrid is nil. On first ever load the analyzer fills it
+// in, but on every subsequent load the analyzer sees BPM>0 && Key!="" and
+// (correctly) skips, leaving the deck with an empty grid.
+//
+// We close that gap here: when a track load event arrives with no grid,
+// fetch the full row from the store and republish as a synthetic
+// AnalyzeComplete so the existing engine + UI handlers apply it the same
+// way they would for a fresh analysis pass.
+func (a *App) subscribeAnalysisHydration() {
+	a.bus.Subscribe(event.TopicEngine, func(ev event.Event) error {
+		if ev.Action != event.ActionTrackLoaded {
+			return nil
+		}
+		track, _ := ev.Payload.(*model.Track)
+		if track == nil || track.Path == "" {
+			return nil
+		}
+		if len(track.BeatGrid) > 0 {
+			return nil // already hydrated by an earlier pass
+		}
+		deckID := ev.DeckID
+		path := track.Path
+		go func() {
+			full, err := a.store.GetByPath(path)
+			if err != nil || full == nil {
+				return
+			}
+			if full.BPM == 0 && len(full.BeatGrid) == 0 {
+				return // nothing cached yet — analyzer will handle it
+			}
+			a.bus.Publish(event.Event{
+				Topic:  event.TopicAnalysis,
+				Action: event.ActionAnalyzeComplete,
+				DeckID: deckID,
+				Payload: &event.AnalysisResult{
+					TrackID:  full.ID,
+					BPM:      full.BPM,
+					Key:      full.Key,
+					Gain:     full.Gain,
+					BeatGrid: full.BeatGrid,
+					DeckID:   deckID,
+				},
+			})
 		}()
 		return nil
 	})
