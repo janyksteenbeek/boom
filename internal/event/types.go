@@ -104,6 +104,12 @@ type AnalysisResult struct {
 	DeckID   int // 0=batch, 1/2=deck
 }
 
+// DeckIDUnresolved marks an FX event from MIDI that needs target resolution
+// via the UI's current FX target. Subsystems that apply effects directly
+// (e.g. the audio engine) must ignore this sentinel — only the UI layer
+// resolves it and republishes with a concrete DeckID (0=master, 1/2=deck).
+const DeckIDUnresolved = -1
+
 // Handler processes an event.
 type Handler func(Event) error
 
@@ -111,7 +117,7 @@ type Handler func(Event) error
 type Event struct {
 	Topic   Topic
 	Action  string
-	DeckID  int         // 0=master, 1=deck1, 2=deck2
+	DeckID  int         // -1=unresolved (MIDI, see DeckIDUnresolved), 0=master, 1=deck1, 2=deck2
 	Value   float64     // Normalized 0.0-1.0 for continuous, 1.0/0.0 for toggle
 	Pressed bool        // True for press events, false for release (button-style triggers)
 	Payload interface{} // Optional typed payload

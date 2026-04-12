@@ -567,10 +567,14 @@ func registerActions(registry *controller.ActionRegistry, bus *event.Bus) {
 		if !ctx.Pressed {
 			return
 		}
+		deckID := ctx.Deck
+		if deckID == 0 {
+			deckID = event.DeckIDUnresolved
+		}
 		bus.Publish(event.Event{
 			Topic:  event.TopicDeck,
 			Action: event.ActionFXActivate,
-			DeckID: ctx.Deck,
+			DeckID: deckID,
 			Value:  1.0,
 		})
 	})
@@ -595,10 +599,16 @@ func registerActions(registry *controller.ActionRegistry, bus *event.Bus) {
 		registry.Register(a, controller.ActionDescriptor{
 			Name: a, Type: controller.ActionTypeContinuous,
 		}, func(ctx controller.ActionContext) {
+			deckID := ctx.Deck
+			// fx_wetdry without a deck context routes via the UI's current
+			// FX target to avoid a publish-loop between window and mixer.
+			if a == event.ActionFXWetDry && deckID == 0 {
+				deckID = event.DeckIDUnresolved
+			}
 			bus.Publish(event.Event{
 				Topic:  event.TopicDeck,
 				Action: a,
-				DeckID: ctx.Deck,
+				DeckID: deckID,
 				Value:  ctx.Value,
 			})
 		})

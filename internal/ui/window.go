@@ -175,20 +175,21 @@ func (w *Window) subscribeEvents() {
 	})
 
 	w.bus.Subscribe(event.TopicDeck, func(ev event.Event) error {
-		// Handle FX events first — these can have DeckID=0 (master/global MIDI)
+		// FX events may arrive unresolved from MIDI (DeckIDUnresolved) —
+		// in that case route through the mixer's current FX target.
 		switch ev.Action {
 		case event.ActionFXTime:
 			w.mixer.UpdateFXTime(ev.Value)
 			return nil
 		case event.ActionFXWetDry:
-			if ev.DeckID == 0 {
+			if ev.DeckID == event.DeckIDUnresolved {
 				w.mixer.HandleMIDIFXWetDry(ev.Value)
 			} else {
 				w.mixer.UpdateFXWetDry(ev.Value)
 			}
 			return nil
 		case event.ActionFXActivate:
-			if ev.DeckID == 0 {
+			if ev.DeckID == event.DeckIDUnresolved {
 				w.mixer.HandleMIDIFXActivate()
 			}
 			return nil
