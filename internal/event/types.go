@@ -37,6 +37,10 @@ const (
 	ActionLoopIn       = "loop_in"
 	ActionLoopOut      = "loop_out"
 	ActionLoopToggle   = "loop_toggle"
+	ActionLoopHalve    = "loop_halve"
+	ActionLoopDouble   = "loop_double"
+	ActionBeatLoop     = "beat_loop"          // Value = beat count
+	ActionLoopStateUpdate = "loop_state_update" // engine -> UI, Payload: *LoopState
 )
 
 // Mixer actions.
@@ -93,6 +97,16 @@ type AnalysisProgress struct {
 	Current int
 	Total   int
 	TrackID string
+}
+
+// LoopState carries the current loop configuration for a deck. A deck has
+// no loop when Start < 0 or End <= Start. Active is true while playback
+// wraps inside the boundaries.
+type LoopState struct {
+	Start  float64 // normalized 0..1; <0 = unset
+	End    float64 // normalized 0..1; <=Start = unset
+	Beats  float64 // 0 = manual loop (no beat length known)
+	Active bool
 }
 
 // AnalysisResult carries completed analysis data for a single track.

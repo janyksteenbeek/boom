@@ -29,6 +29,13 @@ func DefaultConfig() *Config {
 		AutoAnalyzeOnImport:   false,
 		BPMRange:              "normal",
 		AutoCue:               true,
+		Loop: LoopSettings{
+			Quantize:        true,
+			DefaultBeatLoop: 4,
+			MinBeats:        1.0 / 32.0,
+			MaxBeats:        32,
+			SmartLoop:       true,
+		},
 	}
 }
 

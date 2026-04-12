@@ -1,6 +1,7 @@
 package deck
 
 import (
+	"fmt"
 	"math"
 	"sync"
 
@@ -23,12 +24,43 @@ type WaveformWidget struct {
 	position  float64
 	cuePoint  float64 // -1 = unset
 	deckID    int
+
+	// Loop overlay state. loopStart/loopEnd are normalized 0..1; loopBeats is
+	// the beat-length used for the text label; loopActive controls whether
+	// playback is currently wrapping (label gets brighter when inactive to
+	// hint that it's a stored-but-paused loop).
+	loopStart  float64
+	loopEnd    float64
+	loopBeats  float64
+	loopActive bool
 }
 
 func NewWaveformWidget(deckID int) *WaveformWidget {
-	w := &WaveformWidget{deckID: deckID, cuePoint: -1}
+	w := &WaveformWidget{
+		deckID:    deckID,
+		cuePoint:  -1,
+		loopStart: -1,
+		loopEnd:   -1,
+	}
 	w.ExtendBaseWidget(w)
 	return w
+}
+
+// SetLoopState updates the loop overlay. Pass start<0 (or end<=start) to hide.
+func (w *WaveformWidget) SetLoopState(start, end, beats float64, active bool) {
+	w.mu.Lock()
+	if w.loopStart == start && w.loopEnd == end && w.loopBeats == beats && w.loopActive == active {
+		w.mu.Unlock()
+		return
+	}
+	w.loopStart = start
+	w.loopEnd = end
+	w.loopBeats = beats
+	w.loopActive = active
+	w.mu.Unlock()
+	fyne.Do(func() {
+		w.Refresh()
+	})
 }
 
 // SetCuePoint updates the cue marker position. Pass a negative value to hide it.
@@ -82,17 +114,21 @@ func (w *WaveformWidget) MinSize() fyne.Size {
 // --- Renderer ---
 
 type waveformRenderer struct {
-	widget   *WaveformWidget
-	bg       *canvas.Rectangle
-	topLine  *canvas.Line
-	empty    *canvas.Text
-	grid     []*canvas.Line
-	barsLow  []*canvas.Line
-	barsMid  []*canvas.Line
-	barsHigh []*canvas.Line
-	head     *canvas.Line
-	cueMark  *canvas.Line
-	size     fyne.Size
+	widget     *WaveformWidget
+	bg         *canvas.Rectangle
+	topLine    *canvas.Line
+	empty      *canvas.Text
+	grid       []*canvas.Line
+	barsLow    []*canvas.Line
+	barsMid    []*canvas.Line
+	barsHigh   []*canvas.Line
+	head       *canvas.Line
+	cueMark    *canvas.Line
+	loopRegion *canvas.Rectangle
+	loopInMark *canvas.Line
+	loopOutMrk *canvas.Line
+	loopLabel  *canvas.Text
+	size       fyne.Size
 }
 
 func (r *waveformRenderer) buildObjects() {
@@ -139,6 +175,24 @@ func (r *waveformRenderer) buildObjects() {
 	r.cueMark = canvas.NewLine(boomtheme.ColorCueActive)
 	r.cueMark.StrokeWidth = 2
 	r.cueMark.Hidden = true
+
+	r.loopRegion = canvas.NewRectangle(boomtheme.ColorLoopFill)
+	r.loopRegion.CornerRadius = 2
+	r.loopRegion.Hidden = true
+
+	r.loopInMark = canvas.NewLine(boomtheme.ColorLoopMarker)
+	r.loopInMark.StrokeWidth = 2
+	r.loopInMark.Hidden = true
+
+	r.loopOutMrk = canvas.NewLine(boomtheme.ColorLoopMarker)
+	r.loopOutMrk.StrokeWidth = 2
+	r.loopOutMrk.Hidden = true
+
+	r.loopLabel = canvas.NewText("", boomtheme.ColorLoopLabel)
+	r.loopLabel.TextSize = 9
+	r.loopLabel.TextStyle = fyne.TextStyle{Bold: true, Monospace: true}
+	r.loopLabel.Alignment = fyne.TextAlignCenter
+	r.loopLabel.Hidden = true
 }
 
 func (r *waveformRenderer) Layout(size fyne.Size) {
@@ -179,6 +233,10 @@ func (r *waveformRenderer) Refresh() {
 	peaksHigh := r.widget.peaksHigh
 	position := r.widget.position
 	cuePoint := r.widget.cuePoint
+	loopStart := r.widget.loopStart
+	loopEnd := r.widget.loopEnd
+	loopBeats := r.widget.loopBeats
+	loopActive := r.widget.loopActive
 	r.widget.mu.RUnlock()
 
 	size := r.widget.Size()
@@ -320,6 +378,48 @@ func (r *waveformRenderer) Refresh() {
 		} else {
 			r.cueMark.Hidden = true
 		}
+
+		// Loop overlay — Rekordbox-style orange region with boundary lines.
+		if loopStart >= 0 && loopEnd > loopStart {
+			startX := float32(loopStart) * size.Width
+			endX := float32(loopEnd) * size.Width
+			width := endX - startX
+			if width < 1 {
+				width = 1
+			}
+
+			fill := boomtheme.ColorLoopFill
+			if !loopActive {
+				// Dimmer fill when loop is stored but not wrapping.
+				fill.A = 30
+			}
+			r.loopRegion.FillColor = fill
+			r.loopRegion.Move(fyne.NewPos(startX, 2))
+			r.loopRegion.Resize(fyne.NewSize(width, size.Height-4))
+			r.loopRegion.Hidden = false
+			r.loopRegion.Refresh()
+
+			r.loopInMark.Position1 = fyne.NewPos(startX, 0)
+			r.loopInMark.Position2 = fyne.NewPos(startX, size.Height)
+			r.loopInMark.Hidden = false
+			r.loopInMark.Refresh()
+
+			r.loopOutMrk.Position1 = fyne.NewPos(endX, 0)
+			r.loopOutMrk.Position2 = fyne.NewPos(endX, size.Height)
+			r.loopOutMrk.Hidden = false
+			r.loopOutMrk.Refresh()
+
+			r.loopLabel.Text = labelForBeats(loopBeats)
+			r.loopLabel.Move(fyne.NewPos(startX, 2))
+			r.loopLabel.Resize(fyne.NewSize(width, 12))
+			r.loopLabel.Hidden = r.loopLabel.Text == "" || width < 24
+			r.loopLabel.Refresh()
+		} else {
+			r.loopRegion.Hidden = true
+			r.loopInMark.Hidden = true
+			r.loopOutMrk.Hidden = true
+			r.loopLabel.Hidden = true
+		}
 	} else {
 		for _, b := range r.barsLow {
 			b.Hidden = true
@@ -331,6 +431,10 @@ func (r *waveformRenderer) Refresh() {
 			b.Hidden = true
 		}
 		r.cueMark.Hidden = true
+		r.loopRegion.Hidden = true
+		r.loopInMark.Hidden = true
+		r.loopOutMrk.Hidden = true
+		r.loopLabel.Hidden = true
 	}
 
 	r.bg.Refresh()
@@ -357,9 +461,39 @@ func (r *waveformRenderer) Objects() []fyne.CanvasObject {
 	for _, b := range r.barsLow {
 		objs = append(objs, b)
 	}
+	// Loop region drawn under the playhead so the head line stays on top.
+	objs = append(objs, r.loopRegion)
+	objs = append(objs, r.loopInMark, r.loopOutMrk)
 	objs = append(objs, r.head)
 	objs = append(objs, r.cueMark)
+	objs = append(objs, r.loopLabel)
 	return objs
+}
+
+// labelForBeats matches Rekordbox's beat-length captions used inside the loop
+// region on the waveform.
+func labelForBeats(beats float64) string {
+	switch {
+	case beats <= 0:
+		return ""
+	case beats >= 0.999:
+		if beats == float64(int(beats)) {
+			return fmt.Sprintf("%d Beats", int(beats))
+		}
+		return fmt.Sprintf("%.1f Beats", beats)
+	case beats >= 0.49 && beats <= 0.51:
+		return "1/2 Beat"
+	case beats >= 0.24 && beats <= 0.26:
+		return "1/4 Beat"
+	case beats >= 0.124 && beats <= 0.126:
+		return "1/8 Beat"
+	case beats >= 0.062 && beats <= 0.063:
+		return "1/16 Beat"
+	case beats >= 0.031 && beats <= 0.032:
+		return "1/32 Beat"
+	default:
+		return fmt.Sprintf("%.2f Beats", beats)
+	}
 }
 
 func (r *waveformRenderer) Destroy() {}

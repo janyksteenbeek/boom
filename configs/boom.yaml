@@ -14,5 +14,11 @@ audio_output_device: Core Audio::Dell USB Audio
 cue_output_device: Core Audio::DDJ-FLX4
 auto_analyze_on_deck_load: true
 auto_analyze_on_import: false
-bpm_range: ""
+bpm_range: normal
 auto_cue: true
+loop:
+    quantize: true
+    default_beat_loop: 4
+    min_beats: 0.03125
+    max_beats: 32
+    smart_loop: true

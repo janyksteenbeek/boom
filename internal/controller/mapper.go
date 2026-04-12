@@ -60,8 +60,10 @@ func (m *Mapper) HandleNoteOn(channel, note, velocity uint8) {
 	key := MIDIKey{Channel: channel, Status: 0x90, Number: note}
 	rm := m.compiled.InputMap[key]
 	if rm == nil {
+		log.Printf("MIDI: unmapped note ch=%d n=%d v=%d", channel, note, velocity)
 		return
 	}
+	log.Printf("MIDI: note ch=%d n=%d v=%d → action=%s deck=%d", channel, note, velocity, rm.Actions[0], rm.Deck)
 
 	// Check if this is a layer activator
 	for _, layer := range m.compiled.Config.Layers {

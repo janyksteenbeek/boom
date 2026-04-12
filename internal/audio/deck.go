@@ -1,6 +1,7 @@
 package audio
 
 import (
+	"encoding/json"
 	"log"
 	"math"
 	"sync/atomic"
@@ -58,6 +59,15 @@ type Deck struct {
 	cueHeld     atomic.Bool   // CUE button currently held down
 	cuePreview  atomic.Bool   // playing because of CUE-hold preview (release → snap back)
 
+	// Loop state. Positions are normalized 0..1 stored as float64 bits.
+	// A NaN in loopStart/loopEnd means "unset". loopActive controls whether
+	// Stream() wraps playback between the points. loopBeats is the beat
+	// length used for halve/double math (0 = manual loop).
+	loopStart   atomic.Uint64
+	loopEnd     atomic.Uint64
+	loopBeats   atomic.Uint64
+	loopActive  atomic.Bool
+
 	// Pending commands from non-audio threads (written by UI/MIDI, consumed by audio thread)
 	pendingSeek  atomic.Uint64 // float64 bits; NaN = no pending seek
 	pendingFade  atomic.Int32  // 0=none, 1=fade-in, 2=fade-out
@@ -84,6 +94,9 @@ func NewDeck(id int, sampleRate int, bus *event.Bus) *Deck {
 	d.storeFloat(&d.tempoBits, 1.0)
 	d.storeFloat(&d.pendingSeek, math.NaN()) // sentinel: no pending seek
 	d.storeFloat(&d.cuePoint, -1)            // sentinel: no cue set
+	d.storeFloat(&d.loopStart, math.NaN())
+	d.storeFloat(&d.loopEnd, math.NaN())
+	d.storeFloat(&d.loopBeats, 0)
 	return d
 }
 
@@ -138,6 +151,12 @@ func (d *Deck) LoadTrack(track *model.Track) error {
 	d.storeFloat(&d.pendingSeek, math.NaN())              // clear any pending seek
 	d.cueHeld.Store(false)
 	d.cuePreview.Store(false)
+	// Discard any loop from the previous track — loop points are per-session
+	// and anchored to absolute sample indices of a specific PCM buffer.
+	d.loopActive.Store(false)
+	d.storeFloat(&d.loopStart, math.NaN())
+	d.storeFloat(&d.loopEnd, math.NaN())
+	d.storeFloat(&d.loopBeats, 0)
 	// cuePoint is set by the engine after LoadTrack returns (from track.CuePoint).
 	d.pcm.Store(&pcmBuffer{samples: pcm, len: len(pcm)}) // swap buffer
 	d.track.Store(track)
@@ -344,6 +363,141 @@ func (d *Deck) PCMSamples() [][2]float32 {
 	return p.samples[:p.len]
 }
 
+// ── Loop state ───────────────────────────────────────────────────────────────
+
+// LoopStart returns the normalized loop-start position, or NaN if unset.
+func (d *Deck) LoopStart() float64 { return d.loadFloat(&d.loopStart) }
+
+// LoopEnd returns the normalized loop-end position, or NaN if unset.
+func (d *Deck) LoopEnd() float64 { return d.loadFloat(&d.loopEnd) }
+
+// LoopBeats returns the beat-length of the current loop (0 = manual/unknown).
+func (d *Deck) LoopBeats() float64 { return d.loadFloat(&d.loopBeats) }
+
+// IsLoopActive reports whether the audio thread is currently wrapping
+// playback inside the loop boundaries.
+func (d *Deck) IsLoopActive() bool { return d.loopActive.Load() }
+
+// HasLoop reports whether both loop boundaries are set to a valid range.
+func (d *Deck) HasLoop() bool {
+	s := d.LoopStart()
+	e := d.LoopEnd()
+	return !math.IsNaN(s) && !math.IsNaN(e) && e > s && s >= 0
+}
+
+// ClearLoop removes any configured loop and deactivates wrapping.
+func (d *Deck) ClearLoop() {
+	d.loopActive.Store(false)
+	d.storeFloat(&d.loopStart, math.NaN())
+	d.storeFloat(&d.loopEnd, math.NaN())
+	d.storeFloat(&d.loopBeats, 0)
+}
+
+// SetLoopStart stores the loop-start position and deactivates any active
+// loop — the out-point must be set before the loop wraps.
+func (d *Deck) SetLoopStart(pos float64) {
+	if pos < 0 {
+		pos = 0
+	}
+	if pos > 1 {
+		pos = 1
+	}
+	d.loopActive.Store(false)
+	d.storeFloat(&d.loopStart, pos)
+	d.storeFloat(&d.loopEnd, math.NaN())
+	d.storeFloat(&d.loopBeats, 0)
+}
+
+// SetManualLoop stores an in/out pair and activates the loop. beats is the
+// measured length (or 0 if unknown).
+func (d *Deck) SetManualLoop(start, end, beats float64) {
+	if end <= start {
+		return
+	}
+	if start < 0 {
+		start = 0
+	}
+	if end > 1 {
+		end = 1
+	}
+	d.storeFloat(&d.loopStart, start)
+	d.storeFloat(&d.loopEnd, end)
+	d.storeFloat(&d.loopBeats, beats)
+	d.loopActive.Store(true)
+}
+
+// SetLoopActive toggles the wrap flag without touching the boundaries.
+func (d *Deck) SetLoopActive(v bool) { d.loopActive.Store(v) }
+
+// SamplesPerBeat returns the number of samples in one beat at the track's
+// native (non-tempo-adjusted) BPM. Using the native BPM keeps halve/double
+// musically meaningful when the user later changes tempo.
+func (d *Deck) SamplesPerBeat() float64 {
+	t := d.track.Load()
+	if t == nil || t.BPM <= 0 {
+		return 0
+	}
+	return float64(d.sampleRate) * 60.0 / t.BPM
+}
+
+// NearestBeatBefore snaps a normalized position to the nearest beat at or
+// before it, using Track.BeatGrid (JSON []float64 seconds) when available,
+// falling back to a computed grid from BPM, and finally returning pos
+// unchanged if neither is available.
+func (d *Deck) NearestBeatBefore(pos float64) float64 {
+	p := d.pcm.Load()
+	if p == nil || p.len == 0 {
+		return pos
+	}
+	t := d.track.Load()
+	if t == nil {
+		return pos
+	}
+	totalSeconds := float64(p.len) / float64(d.sampleRate)
+	if totalSeconds <= 0 {
+		return pos
+	}
+	posSeconds := pos * totalSeconds
+
+	if t.BeatGrid != "" {
+		var beats []float64
+		if err := json.Unmarshal([]byte(t.BeatGrid), &beats); err == nil && len(beats) > 0 {
+			best := beats[0]
+			for _, b := range beats {
+				if b <= posSeconds {
+					best = b
+				} else {
+					break
+				}
+			}
+			return best / totalSeconds
+		}
+	}
+	if t.BPM > 0 {
+		beatPeriod := 60.0 / t.BPM
+		n := math.Floor(posSeconds / beatPeriod)
+		return (n * beatPeriod) / totalSeconds
+	}
+	return pos
+}
+
+// UpdateTrackAnalysis refreshes the deck's cached track metadata after an
+// analysis pass completes. Without this the deck keeps the BPM=0 / empty
+// beatgrid snapshot captured at LoadTrack time, and beat-based features
+// (loops, sync) silently no-op on newly analyzed tracks.
+func (d *Deck) UpdateTrackAnalysis(trackID string, bpm float64, key string, beatGridJSON string) bool {
+	t := d.track.Load()
+	if t == nil || t.ID != trackID {
+		return false
+	}
+	updated := *t
+	updated.BPM = bpm
+	updated.Key = key
+	updated.BeatGrid = beatGridJSON
+	d.track.Store(&updated)
+	return true
+}
+
 // EffectiveBPM returns the track's BPM adjusted by the current tempo ratio.
 // Returns 0 if no track is loaded or the track has no BPM metadata.
 func (d *Deck) EffectiveBPM() float64 {
@@ -418,30 +572,86 @@ func (d *Deck) Stream(samples [][2]float32) {
 	tempo := d.loadFloat(&d.tempoBits)
 	n := len(samples)
 
-	if tempo == 1.0 {
-		// Fast path: no tempo change, direct copy (fpos stays source of truth)
-		startIdx := int(d.fpos)
-		remaining := p.len - startIdx
-		if remaining <= 0 {
-			for i := range samples {
-				samples[i] = [2]float32{}
+	// Snapshot loop bounds once per call — cheap atomic loads, used from the
+	// hot inner loops below without re-checking every sample.
+	loopActive := d.loopActive.Load()
+	var loopStartSamples, loopEndSamples float64
+	if loopActive {
+		ls := d.loadFloat(&d.loopStart)
+		le := d.loadFloat(&d.loopEnd)
+		if math.IsNaN(ls) || math.IsNaN(le) || le <= ls {
+			loopActive = false
+		} else {
+			loopStartSamples = ls * float64(p.len)
+			loopEndSamples = le * float64(p.len)
+			if loopEndSamples > float64(p.len) {
+				loopEndSamples = float64(p.len)
 			}
-			d.playing.Store(false)
-			d.fade = NewFadeEnvelope(d.sampleRate, 0.01)
-			return
+			if loopEndSamples <= loopStartSamples {
+				loopActive = false
+			}
 		}
-		count := n
-		if count > remaining {
-			count = remaining
-		}
-		copy(samples[:count], p.samples[startIdx:startIdx+count])
-		d.fpos += float64(count)
-		for i := count; i < n; i++ {
-			samples[i] = [2]float32{}
+	}
+
+	eotReached := false
+
+	if tempo == 1.0 {
+		// Fast path: direct buffer copy. When a loop is active we split the
+		// copy at the loop end so wrapping is sample-accurate even if the
+		// loop is shorter than one block.
+		i := 0
+		for i < n {
+			if loopActive && d.fpos >= loopEndSamples {
+				d.fpos = loopStartSamples + (d.fpos - loopEndSamples)
+				if d.fpos < loopStartSamples {
+					d.fpos = loopStartSamples
+				}
+			}
+			startIdx := int(d.fpos)
+			if startIdx >= p.len {
+				for j := i; j < n; j++ {
+					samples[j] = [2]float32{}
+				}
+				eotReached = true
+				break
+			}
+			capIdx := p.len
+			if loopActive {
+				if le := int(loopEndSamples); le < capIdx {
+					capIdx = le
+				}
+			}
+			remaining := capIdx - startIdx
+			if remaining <= 0 {
+				if loopActive {
+					d.fpos = loopStartSamples
+					continue
+				}
+				for j := i; j < n; j++ {
+					samples[j] = [2]float32{}
+				}
+				eotReached = true
+				break
+			}
+			count := n - i
+			if count > remaining {
+				count = remaining
+			}
+			copy(samples[i:i+count], p.samples[startIdx:startIdx+count])
+			d.fpos += float64(count)
+			i += count
 		}
 	} else {
-		// Tempo: linear interpolation with float64 accumulator (fpos is persistent)
+		// Tempo path: linear interpolation with float64 accumulator. The loop
+		// wrap is checked once per output sample, which is trivial compared
+		// to the interpolation itself.
 		for i := 0; i < n; i++ {
+			if loopActive && d.fpos >= loopEndSamples {
+				d.fpos = loopStartSamples + (d.fpos - loopEndSamples)
+				if d.fpos < loopStartSamples {
+					d.fpos = loopStartSamples
+				}
+			}
 			idx := int(d.fpos)
 			if idx >= p.len-1 {
 				samples[i] = [2]float32{}
@@ -454,7 +664,7 @@ func (d *Deck) Stream(samples [][2]float32) {
 		}
 	}
 	d.pos = int(d.fpos)
-	if d.pos >= p.len {
+	if !loopActive && (eotReached || d.pos >= p.len) {
 		d.playing.Store(false)
 		d.fade = NewFadeEnvelope(d.sampleRate, 0.01)
 	}

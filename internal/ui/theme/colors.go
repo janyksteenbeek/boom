@@ -81,6 +81,13 @@ var (
 	ColorSyncActive = ColorYellow
 )
 
+// Loop overlay — Rekordbox-style orange fill with visible boundary markers.
+var (
+	ColorLoopFill   = color.RGBA{R: 255, G: 159, B: 10, A: 60}  // semi-transparent orange region
+	ColorLoopMarker = color.RGBA{R: 255, G: 159, B: 10, A: 220} // boundary lines
+	ColorLoopLabel  = color.RGBA{R: 255, G: 200, B: 80, A: 255} // beats label
+)
+
 // DeckColor returns the primary color for a deck.
 func DeckColor(deckID int) color.Color {
 	if deckID == 2 {

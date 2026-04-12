@@ -2,6 +2,7 @@ package deck
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -28,6 +29,12 @@ type DeckView struct {
 	playBtn *components.DJButton
 	cueBtn  *components.DJButton
 	syncBtn *components.DJButton
+
+	loopInBtn    *components.DJButton
+	loopOutBtn   *components.DJButton
+	reloopBtn    *components.DJButton
+	loopHalveBtn *components.DJButton
+	loopDoubleBtn *components.DJButton
 
 	volKnob   *components.Knob
 	gainKnob  *components.Knob
@@ -110,6 +117,28 @@ func NewDeckView(deckID int, bus *event.Bus) *DeckView {
 		bus.Publish(event.Event{Topic: event.TopicDeck, Action: event.ActionSync, DeckID: deckID})
 	})
 
+	// Compact loop controls — fire per-deck; no target switching needed.
+	d.loopInBtn = components.NewDJButton("IN", boomtheme.ColorCueActive, func() {
+		log.Printf("deck%d UI: loop_in click", deckID)
+		bus.Publish(event.Event{Topic: event.TopicDeck, Action: event.ActionLoopIn, DeckID: deckID})
+	})
+	d.loopOutBtn = components.NewDJButton("OUT", boomtheme.ColorCueActive, func() {
+		log.Printf("deck%d UI: loop_out click", deckID)
+		bus.Publish(event.Event{Topic: event.TopicDeck, Action: event.ActionLoopOut, DeckID: deckID})
+	})
+	d.reloopBtn = components.NewDJButton("RELOOP", boomtheme.ColorCueActive, func() {
+		log.Printf("deck%d UI: loop_toggle click", deckID)
+		bus.Publish(event.Event{Topic: event.TopicDeck, Action: event.ActionLoopToggle, DeckID: deckID})
+	})
+	d.loopHalveBtn = components.NewDJButton("1/2×", boomtheme.ColorLabel, func() {
+		log.Printf("deck%d UI: loop_halve click", deckID)
+		bus.Publish(event.Event{Topic: event.TopicDeck, Action: event.ActionLoopHalve, DeckID: deckID})
+	})
+	d.loopDoubleBtn = components.NewDJButton("2×", boomtheme.ColorLabel, func() {
+		log.Printf("deck%d UI: loop_double click", deckID)
+		bus.Publish(event.Event{Topic: event.TopicDeck, Action: event.ActionLoopDouble, DeckID: deckID})
+	})
+
 	// Knobs
 	d.volKnob = components.NewKnob("VOL", 0.8, deckColor, func(v float64) {
 		bus.Publish(event.Event{Topic: event.TopicDeck, Action: event.ActionVolumeChange, DeckID: deckID, Value: v})
@@ -146,11 +175,25 @@ func NewDeckView(deckID int, bus *event.Bus) *DeckView {
 
 	// Transport buttons - fixed size in a row
 	btnSize := fyne.NewSize(72, 32)
-	buttonsRow := container.NewHBox(
+	transportRow := container.NewHBox(
 		container.New(layout.NewGridWrapLayout(btnSize), d.playBtn),
 		container.New(layout.NewGridWrapLayout(btnSize), d.cueBtn),
 		container.New(layout.NewGridWrapLayout(btnSize), d.syncBtn),
 	)
+
+	// Compact loop row — five small buttons below transport. The cell size
+	// stays at or above DJButton.MinSize (60×28) so GridWrap doesn't clip
+	// hit-testing on the smaller ones.
+	loopBtnSize := fyne.NewSize(60, 28)
+	loopRow := container.NewHBox(
+		container.New(layout.NewGridWrapLayout(loopBtnSize), d.loopInBtn),
+		container.New(layout.NewGridWrapLayout(loopBtnSize), d.loopOutBtn),
+		container.New(layout.NewGridWrapLayout(loopBtnSize), d.reloopBtn),
+		container.New(layout.NewGridWrapLayout(loopBtnSize), d.loopHalveBtn),
+		container.New(layout.NewGridWrapLayout(loopBtnSize), d.loopDoubleBtn),
+	)
+
+	buttonsRow := container.NewVBox(transportRow, loopRow)
 
 	// Knobs in a row with fixed size
 	knobSize := fyne.NewSize(54, 72)
@@ -191,6 +234,52 @@ func (d *DeckView) UpdatePosition(pos float64) {
 // Pass a negative value to hide it.
 func (d *DeckView) UpdateCuePoint(pos float64) {
 	d.waveform.SetCuePoint(pos)
+}
+
+// UpdateLoopState forwards engine loop state changes to the waveform overlay
+// and the compact loop buttons. The RELOOP button lights up while the loop
+// is wrapping and shows the beat count as its label (e.g. "4", "8", "1/2")
+// so the user has a glanceable read of the active loop length.
+func (d *DeckView) UpdateLoopState(state *event.LoopState) {
+	if state == nil {
+		d.waveform.SetLoopState(-1, -1, 0, false)
+		d.reloopBtn.SetActive(false)
+		d.reloopBtn.SetText("RELOOP")
+		return
+	}
+	d.waveform.SetLoopState(state.Start, state.End, state.Beats, state.Active)
+	d.reloopBtn.SetActive(state.Active)
+
+	hasLoop := state.Start >= 0 && state.End > state.Start
+	if hasLoop && state.Beats > 0 {
+		d.reloopBtn.SetText(compactBeatLabel(state.Beats))
+	} else {
+		d.reloopBtn.SetText("RELOOP")
+	}
+}
+
+// compactBeatLabel renders a beat count as a terse label that fits inside
+// the compact reloop button ("4", "1/2", "1/32", etc.).
+func compactBeatLabel(beats float64) string {
+	switch {
+	case beats >= 0.999:
+		if beats == float64(int(beats)) {
+			return fmt.Sprintf("%d", int(beats))
+		}
+		return fmt.Sprintf("%.1f", beats)
+	case beats >= 0.49 && beats <= 0.51:
+		return "1/2"
+	case beats >= 0.24 && beats <= 0.26:
+		return "1/4"
+	case beats >= 0.124 && beats <= 0.126:
+		return "1/8"
+	case beats >= 0.062 && beats <= 0.063:
+		return "1/16"
+	case beats >= 0.031 && beats <= 0.032:
+		return "1/32"
+	default:
+		return fmt.Sprintf("%.2f", beats)
+	}
 }
 
 func (d *DeckView) SetWaveformData(data *audio.WaveformData) {

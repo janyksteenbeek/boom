@@ -1,8 +1,10 @@
 package audio
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,6 +25,16 @@ const (
 	feederBlockFrames = 512
 )
 
+// LoopOptions mirrors config.LoopSettings so the audio package can honor
+// the user's loop preferences without importing the config package.
+type LoopOptions struct {
+	Quantize        bool
+	DefaultBeatLoop float64
+	MinBeats        float64
+	MaxBeats        float64
+	SmartLoop       bool
+}
+
 type Engine struct {
 	bus        *event.Bus
 	decks      [NumDecks]*Deck
@@ -34,6 +46,7 @@ type Engine struct {
 	feederWG sync.WaitGroup
 
 	autoCue atomic.Bool // auto-cue on load (fallback cue = first audio frame)
+	loopOpt atomic.Pointer[LoopOptions]
 
 	backend      output.Backend
 	masterStream output.Stream
@@ -43,6 +56,34 @@ type Engine struct {
 // SetAutoCue toggles auto-cue-on-load. When enabled, tracks without a saved
 // manual cue seek to the first audible sample rather than sample 0.
 func (e *Engine) SetAutoCue(v bool) { e.autoCue.Store(v) }
+
+// SetLoopOptions publishes a snapshot of the loop preferences. Called on
+// startup and whenever the user saves the settings dialog.
+func (e *Engine) SetLoopOptions(opts LoopOptions) {
+	if opts.MinBeats <= 0 {
+		opts.MinBeats = 1.0 / 32.0
+	}
+	if opts.MaxBeats <= 0 {
+		opts.MaxBeats = 32
+	}
+	if opts.DefaultBeatLoop <= 0 {
+		opts.DefaultBeatLoop = 4
+	}
+	e.loopOpt.Store(&opts)
+}
+
+func (e *Engine) loopOptions() LoopOptions {
+	if opt := e.loopOpt.Load(); opt != nil {
+		return *opt
+	}
+	return LoopOptions{
+		Quantize:        true,
+		DefaultBeatLoop: 4,
+		MinBeats:        1.0 / 32.0,
+		MaxBeats:        32,
+		SmartLoop:       true,
+	}
+}
 
 // openWithFallback tries to open a named device, then resolves the
 // configured ID against the current device list (so a stale config
@@ -240,6 +281,14 @@ func (e *Engine) Stop() {
 
 func (e *Engine) subscribeEvents() {
 	e.bus.Subscribe(event.TopicDeck, func(ev event.Event) error {
+		// Temporary trace: every deck event that reaches the engine. Loop-
+		// related issues should show up as missing log lines.
+		if ev.Action == event.ActionLoopIn || ev.Action == event.ActionLoopOut ||
+			ev.Action == event.ActionLoopToggle || ev.Action == event.ActionLoopHalve ||
+			ev.Action == event.ActionLoopDouble || ev.Action == event.ActionBeatLoop {
+			log.Printf("engine RX: action=%s deckID=%d pressed=%v value=%v",
+				ev.Action, ev.DeckID, ev.Pressed, ev.Value)
+		}
 		if ev.DeckID < 1 || ev.DeckID > NumDecks {
 			return nil
 		}
@@ -377,6 +426,107 @@ func (e *Engine) subscribeEvents() {
 			log.Printf("engine: sync deck %d → %.1f BPM (matched deck %d at %.1f BPM, ratio %.3f)",
 				ev.DeckID, deckTrack.BPM*newRatio, otherID, otherBPM, newRatio)
 
+		case event.ActionLoopIn:
+			if deck.Track() == nil {
+				return nil
+			}
+			pos := deck.Position()
+			if e.loopOptions().Quantize {
+				if snapped := deck.NearestBeatBefore(pos); snapped > 0 {
+					pos = snapped
+				}
+			}
+			deck.SetLoopStart(pos)
+			e.publishLoopState(deck)
+
+		case event.ActionLoopOut:
+			if deck.Track() == nil {
+				return nil
+			}
+			start := deck.LoopStart()
+			if math.IsNaN(start) {
+				return nil
+			}
+			end := deck.Position()
+			if e.loopOptions().Quantize {
+				if snapped := deck.NearestBeatBefore(end); snapped > start {
+					end = snapped
+				}
+			}
+			if end <= start {
+				return nil
+			}
+			beats := e.samplesToBeats(deck, start, end)
+			deck.SetManualLoop(start, end, beats)
+			e.publishLoopState(deck)
+
+		case event.ActionLoopToggle:
+			// DDJ-FLX4 "4 Beat / Exit Loop" button: while a loop is active
+			// this exits AND clears the stored boundaries, so the next press
+			// always starts a fresh auto beat loop from the current playhead.
+			if deck.Track() == nil {
+				return nil
+			}
+			if deck.IsLoopActive() || deck.HasLoop() {
+				deck.ClearLoop()
+				e.publishLoopState(deck)
+				return nil
+			}
+			opts := e.loopOptions()
+			if e.applyBeatLoop(deck, opts.DefaultBeatLoop) {
+				e.publishLoopState(deck)
+			}
+
+		case event.ActionLoopHalve:
+			log.Printf("engine: loop_halve deck=%d hasLoop=%v beats=%.4f start=%.4f end=%.4f",
+				ev.DeckID, deck.HasLoop(), deck.LoopBeats(), deck.LoopStart(), deck.LoopEnd())
+			if !deck.HasLoop() {
+				return nil
+			}
+			opts := e.loopOptions()
+			beats := deck.LoopBeats()
+			if beats <= 0 {
+				beats = e.samplesToBeats(deck, deck.LoopStart(), deck.LoopEnd())
+			}
+			beats = beats / 2
+			if beats < opts.MinBeats {
+				beats = opts.MinBeats
+			}
+			ok := e.resizeLoopBeats(deck, beats)
+			log.Printf("engine: loop_halve → newBeats=%.4f resized=%v", beats, ok)
+			if ok {
+				e.publishLoopState(deck)
+			}
+
+		case event.ActionLoopDouble:
+			log.Printf("engine: loop_double deck=%d hasLoop=%v beats=%.4f",
+				ev.DeckID, deck.HasLoop(), deck.LoopBeats())
+			if !deck.HasLoop() {
+				return nil
+			}
+			opts := e.loopOptions()
+			beats := deck.LoopBeats()
+			if beats <= 0 {
+				beats = e.samplesToBeats(deck, deck.LoopStart(), deck.LoopEnd())
+			}
+			beats = beats * 2
+			if beats > opts.MaxBeats {
+				beats = opts.MaxBeats
+			}
+			ok := e.resizeLoopBeats(deck, beats)
+			log.Printf("engine: loop_double → newBeats=%.4f resized=%v", beats, ok)
+			if ok {
+				e.publishLoopState(deck)
+			}
+
+		case event.ActionBeatLoop:
+			if deck.Track() == nil || ev.Value <= 0 {
+				return nil
+			}
+			if e.applyBeatLoop(deck, ev.Value) {
+				e.publishLoopState(deck)
+			}
+
 		case event.ActionLoadTrack:
 			track, ok := ev.Payload.(*model.Track)
 			if !ok {
@@ -401,6 +551,7 @@ func (e *Engine) subscribeEvents() {
 					deck.ClearCue()
 				}
 				e.publishCuePointChanged(deck, deck.CuePoint())
+				e.publishLoopState(deck)
 				// Seek to effective cue, stay paused (no auto-play).
 				deck.Seek(deck.EffectiveCue())
 				e.bus.PublishAsync(event.Event{
@@ -408,6 +559,30 @@ func (e *Engine) subscribeEvents() {
 					DeckID: deckID, Value: 0.0,
 				})
 			}()
+		}
+		return nil
+	})
+
+	// Analysis results → refresh the deck's cached Track so loop/sync
+	// features pick up the new BPM and beat grid without needing a reload.
+	e.bus.Subscribe(event.TopicAnalysis, func(ev event.Event) error {
+		if ev.Action != event.ActionAnalyzeComplete {
+			return nil
+		}
+		res, ok := ev.Payload.(*event.AnalysisResult)
+		if !ok || res == nil {
+			return nil
+		}
+		beatGridJSON := ""
+		if len(res.BeatGrid) > 0 {
+			if data, mErr := json.Marshal(res.BeatGrid); mErr == nil {
+				beatGridJSON = string(data)
+			}
+		}
+		for _, d := range e.decks {
+			if d.UpdateTrackAnalysis(res.TrackID, res.BPM, res.Key, beatGridJSON) {
+				log.Printf("engine: deck %d track analysis applied (bpm=%.2f)", d.ID(), res.BPM)
+			}
 		}
 		return nil
 	})
@@ -499,6 +674,123 @@ func boolToFloat(b bool) float64 {
 		return 1.0
 	}
 	return 0.0
+}
+
+// applyBeatLoop creates a beat-length loop of `beats` starting at the nearest
+// beat before the current playhead. Returns true if the loop was applied.
+func (e *Engine) applyBeatLoop(deck *Deck, beats float64) bool {
+	pcmLen := len(deck.PCMSamples())
+	if pcmLen == 0 {
+		return false
+	}
+	spb := deck.SamplesPerBeat()
+	if spb <= 0 {
+		log.Printf("engine: beat loop deck %d — no BPM metadata", deck.ID())
+		return false
+	}
+	opts := e.loopOptions()
+	if beats < opts.MinBeats {
+		beats = opts.MinBeats
+	}
+	if beats > opts.MaxBeats {
+		beats = opts.MaxBeats
+	}
+	start := deck.NearestBeatBefore(deck.Position())
+	if start < 0 {
+		start = 0
+	}
+	startSamples := start * float64(pcmLen)
+	endSamples := startSamples + beats*spb
+	if endSamples > float64(pcmLen) {
+		if !opts.SmartLoop {
+			return false
+		}
+		endSamples = float64(pcmLen)
+		// Recompute beats from clamped length so halve/double stay sensible.
+		beats = (endSamples - startSamples) / spb
+		if beats <= 0 {
+			return false
+		}
+	}
+	end := endSamples / float64(pcmLen)
+	deck.SetManualLoop(start, end, beats)
+	return true
+}
+
+// resizeLoopBeats keeps the current loop start but recomputes the end
+// position for the new beat length. Returns true when the loop was updated.
+func (e *Engine) resizeLoopBeats(deck *Deck, beats float64) bool {
+	pcmLen := len(deck.PCMSamples())
+	if pcmLen == 0 {
+		return false
+	}
+	spb := deck.SamplesPerBeat()
+	if spb <= 0 || beats <= 0 {
+		return false
+	}
+	start := deck.LoopStart()
+	if math.IsNaN(start) {
+		return false
+	}
+	startSamples := start * float64(pcmLen)
+	endSamples := startSamples + beats*spb
+	opts := e.loopOptions()
+	if endSamples > float64(pcmLen) {
+		if !opts.SmartLoop {
+			return false
+		}
+		endSamples = float64(pcmLen)
+		beats = (endSamples - startSamples) / spb
+		if beats <= 0 {
+			return false
+		}
+	}
+	end := endSamples / float64(pcmLen)
+	// Keep wrapping active if it already was.
+	wasActive := deck.IsLoopActive()
+	deck.SetManualLoop(start, end, beats)
+	if !wasActive {
+		deck.SetLoopActive(false)
+	}
+	return true
+}
+
+// samplesToBeats converts a normalized (start,end) pair into a beat count.
+func (e *Engine) samplesToBeats(deck *Deck, start, end float64) float64 {
+	pcmLen := len(deck.PCMSamples())
+	if pcmLen == 0 {
+		return 0
+	}
+	spb := deck.SamplesPerBeat()
+	if spb <= 0 {
+		return 0
+	}
+	return (end - start) * float64(pcmLen) / spb
+}
+
+// publishLoopState broadcasts the deck's current loop configuration so the
+// UI (waveform overlay, loop bar) can reflect it.
+func (e *Engine) publishLoopState(deck *Deck) {
+	start := deck.LoopStart()
+	end := deck.LoopEnd()
+	if math.IsNaN(start) {
+		start = -1
+	}
+	if math.IsNaN(end) {
+		end = -1
+	}
+	state := &event.LoopState{
+		Start:  start,
+		End:    end,
+		Beats:  deck.LoopBeats(),
+		Active: deck.IsLoopActive(),
+	}
+	e.bus.PublishAsync(event.Event{
+		Topic:   event.TopicEngine,
+		Action:  event.ActionLoopStateUpdate,
+		DeckID:  deck.ID(),
+		Payload: state,
+	})
 }
 
 // publishCuePointChanged broadcasts a cue point update so the UI can refresh

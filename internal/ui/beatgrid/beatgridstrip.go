@@ -95,6 +95,21 @@ func (b *BeatGridStrip) SetBeatGrid(deckID int, beats []float64) {
 	b.strip(deckID).SetBeatGrid(beats)
 }
 
+// SetCuePoint forwards cue-point updates to the scrolling strip.
+func (b *BeatGridStrip) SetCuePoint(deckID int, pos float64) {
+	b.strip(deckID).SetCuePoint(pos)
+}
+
+// SetLoopState forwards engine loop-state updates to the scrolling strip
+// so the orange region tracks the waveform overview in sync with the deck.
+func (b *BeatGridStrip) SetLoopState(deckID int, state *event.LoopState) {
+	if state == nil {
+		b.strip(deckID).SetLoopState(-1, -1, false)
+		return
+	}
+	b.strip(deckID).SetLoopState(state.Start, state.End, state.Active)
+}
+
 // Scrolled handles mouse wheel for zoom control.
 func (b *BeatGridStrip) Scrolled(ev *fyne.ScrollEvent) {
 	b.mu.Lock()

@@ -178,6 +178,13 @@ func (w *Window) subscribeEvents() {
 			if d != nil {
 				d.UpdateCuePoint(ev.Value)
 			}
+			w.beatGrid.SetCuePoint(ev.DeckID, ev.Value)
+		case event.ActionLoopStateUpdate:
+			state, _ := ev.Payload.(*event.LoopState)
+			if d != nil {
+				d.UpdateLoopState(state)
+			}
+			w.beatGrid.SetLoopState(ev.DeckID, state)
 		}
 		return nil
 	})

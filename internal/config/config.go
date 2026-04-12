@@ -68,6 +68,18 @@ type Config struct {
 	AutoAnalyzeOnImport   bool   `yaml:"auto_analyze_on_import"`
 	BPMRange              string `yaml:"bpm_range"` // "normal", "wide", or genre presets
 	AutoCue               bool   `yaml:"auto_cue"`  // Seek to first audio frame on track load (fallback cue)
+	Loop                  LoopSettings `yaml:"loop"`
+}
+
+// LoopSettings holds per-app loop preferences. Mirrors Rekordbox's Loop options:
+// quantize in/out points to the beat grid, auto-beat default length, bounds
+// for halve/double, and "smart loop" handling near track boundaries.
+type LoopSettings struct {
+	Quantize        bool    `yaml:"quantize"`         // snap loop in/out to beat grid
+	DefaultBeatLoop float64 `yaml:"default_beat_loop"` // beats (default 4)
+	MinBeats        float64 `yaml:"min_beats"`         // default 1/32 = 0.03125
+	MaxBeats        float64 `yaml:"max_beats"`         // default 32
+	SmartLoop       bool    `yaml:"smart_loop"`        // clamp instead of skip near boundaries
 }
 
 // Load reads the configuration from the default config file.
@@ -141,6 +153,18 @@ func (c *Config) Validate() bool {
 	}
 	if c.BPMRange == "" {
 		c.BPMRange = defaults.BPMRange
+		changed = true
+	}
+	if c.Loop.DefaultBeatLoop <= 0 {
+		c.Loop.DefaultBeatLoop = defaults.Loop.DefaultBeatLoop
+		changed = true
+	}
+	if c.Loop.MinBeats <= 0 {
+		c.Loop.MinBeats = defaults.Loop.MinBeats
+		changed = true
+	}
+	if c.Loop.MaxBeats <= 0 {
+		c.Loop.MaxBeats = defaults.Loop.MaxBeats
 		changed = true
 	}
 

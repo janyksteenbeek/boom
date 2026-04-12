@@ -107,6 +107,16 @@ decks:
       midi: { status: note, number: 77 }    # ch0/1 Note 77 = autoLoopOnOff
       action: loop_toggle
 
+    - name: loop_halve
+      type: button
+      midi: { status: note, number: 81 }    # ch0/1 Note 81 = loop 1/2x call
+      action: loop_halve
+
+    - name: loop_double
+      type: button
+      midi: { status: note, number: 83 }    # ch0/1 Note 83 = loop 2x call
+      action: loop_double
+
   # ─── PERFORMANCE PADS (ch7=deck1, ch9=deck2 per DJay) ──
   # NOTE: Pads use different MIDI channels than the deck channels
   # For now we map them on the deck channels; pad channel support comes later

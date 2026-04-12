@@ -30,15 +30,52 @@ type DeckStrip struct {
 	duration  time.Duration // track duration
 	position  float64       // 0.0-1.0 normalized
 	zoom      float64       // visible fraction of track (0.02-1.0)
+
+	// Loop overlay — normalized 0..1; <0 = unset.
+	loopStart  float64
+	loopEnd    float64
+	loopActive bool
+
+	// Cue marker — normalized 0..1; <0 = unset.
+	cuePoint float64
 }
 
 func NewDeckStrip(deckID int) *DeckStrip {
 	d := &DeckStrip{
-		deckID: deckID,
-		zoom:   0.1,
+		deckID:    deckID,
+		zoom:      0.1,
+		loopStart: -1,
+		loopEnd:   -1,
+		cuePoint:  -1,
 	}
 	d.ExtendBaseWidget(d)
 	return d
+}
+
+// SetCuePoint updates the cue marker position. Pass a negative value to hide.
+func (d *DeckStrip) SetCuePoint(pos float64) {
+	d.mu.Lock()
+	if d.cuePoint == pos {
+		d.mu.Unlock()
+		return
+	}
+	d.cuePoint = pos
+	d.mu.Unlock()
+	fyne.Do(func() { d.Refresh() })
+}
+
+// SetLoopState updates the scrolling loop overlay. Pass start<0 to hide.
+func (d *DeckStrip) SetLoopState(start, end float64, active bool) {
+	d.mu.Lock()
+	if d.loopStart == start && d.loopEnd == end && d.loopActive == active {
+		d.mu.Unlock()
+		return
+	}
+	d.loopStart = start
+	d.loopEnd = end
+	d.loopActive = active
+	d.mu.Unlock()
+	fyne.Do(func() { d.Refresh() })
 }
 
 func (d *DeckStrip) SetFrequencyPeaks(low, mid, high []float64) {
@@ -178,6 +215,10 @@ func (r *deckStripRenderer) draw(w, h int) image.Image {
 	duration := r.widget.duration
 	position := r.widget.position
 	zoom := r.widget.zoom
+	loopStart := r.widget.loopStart
+	loopEnd := r.widget.loopEnd
+	loopActive := r.widget.loopActive
+	cuePoint := r.widget.cuePoint
 	r.widget.mu.RUnlock()
 
 	// Resize image buffer if needed
@@ -292,6 +333,40 @@ func (r *deckStripRenderer) draw(w, h int) image.Image {
 		}
 	}
 
+	// Draw loop overlay under the beat markers so they stay legible.
+	if loopStart >= 0 && loopEnd > loopStart {
+		xStartF := (loopStart - viewStart) / viewRange * float64(w)
+		xEndF := (loopEnd - viewStart) / viewRange * float64(w)
+		xStart := int(xStartF)
+		xEnd := int(xEndF)
+		if xEnd > w {
+			xEnd = w
+		}
+		if xStart < 0 {
+			xStart = 0
+		}
+		fill := boomtheme.ColorLoopFill
+		if !loopActive {
+			fill.A = 30
+		}
+		// Fill region with alpha-blended orange.
+		for x := xStart; x < xEnd; x++ {
+			r.vLineAlpha(x, 2, h-3, fill)
+		}
+		// Bright boundary lines at in/out.
+		marker := boomtheme.ColorLoopMarker
+		if xStartF >= 0 && xStartF < float64(w) {
+			bx := int(xStartF)
+			r.vLineAlpha(bx, 0, h-1, marker)
+			r.vLineAlpha(bx+1, 0, h-1, marker)
+		}
+		if xEndF >= 0 && xEndF < float64(w) {
+			bx := int(xEndF)
+			r.vLineAlpha(bx, 0, h-1, marker)
+			r.vLineAlpha(bx-1, 0, h-1, marker)
+		}
+	}
+
 	// Draw beat markers on top of waveform
 	durSec := duration.Seconds()
 	if durSec > 0 && len(beatGrid) > 0 {
@@ -310,6 +385,17 @@ func (r *deckStripRenderer) draw(w, h int) image.Image {
 				c = boomtheme.ColorBeatLine
 			}
 			r.vLineAlpha(bx, 2, h-3, c)
+		}
+	}
+
+	// Draw cue marker — solid orange vertical line within the visible window.
+	if cuePoint >= 0 {
+		cueXF := (cuePoint - viewStart) / viewRange * float64(w)
+		if cueXF >= 0 && cueXF < float64(w) {
+			cx := int(cueXF)
+			cueColor := boomtheme.ColorCueActive
+			r.vLineAlpha(cx, 0, h-1, cueColor)
+			r.vLineAlpha(cx+1, 0, h-1, cueColor)
 		}
 	}
 

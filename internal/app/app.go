@@ -58,6 +58,13 @@ func New() (*App, error) {
 		return nil, err
 	}
 	engine.SetAutoCue(cfg.AutoCue)
+	engine.SetLoopOptions(audio.LoopOptions{
+		Quantize:        cfg.Loop.Quantize,
+		DefaultBeatLoop: cfg.Loop.DefaultBeatLoop,
+		MinBeats:        cfg.Loop.MinBeats,
+		MaxBeats:        cfg.Loop.MaxBeats,
+		SmartLoop:       cfg.Loop.SmartLoop,
+	})
 
 	midiMgr := boomidi.NewManager(bus)
 
@@ -165,6 +172,13 @@ func New() (*App, error) {
 	window.OnSettingsSave(func(updatedCfg *config.Config) {
 		log.Printf("settings saved, rescanning music dirs: %v", updatedCfg.MusicDirs)
 		engine.SetAutoCue(updatedCfg.AutoCue)
+		engine.SetLoopOptions(audio.LoopOptions{
+			Quantize:        updatedCfg.Loop.Quantize,
+			DefaultBeatLoop: updatedCfg.Loop.DefaultBeatLoop,
+			MinBeats:        updatedCfg.Loop.MinBeats,
+			MaxBeats:        updatedCfg.Loop.MaxBeats,
+			SmartLoop:       updatedCfg.Loop.SmartLoop,
+		})
 		go func() {
 			app.library.ScanDirs(updatedCfg.MusicDirs)
 			tracks, err := app.library.AllTracks(0, 500)
@@ -353,6 +367,7 @@ func registerActions(registry *controller.ActionRegistry, bus *event.Bus) {
 		event.ActionPlayPause, event.ActionPlay, event.ActionPause,
 		event.ActionSync,
 		event.ActionLoopIn, event.ActionLoopOut, event.ActionLoopToggle,
+		event.ActionLoopHalve, event.ActionLoopDouble,
 	} {
 		a := action
 		registry.Register(a, controller.ActionDescriptor{
@@ -361,6 +376,7 @@ func registerActions(registry *controller.ActionRegistry, bus *event.Bus) {
 			if !ctx.Pressed {
 				return
 			}
+			log.Printf("MIDI action: %s deck=%d", a, ctx.Deck)
 			bus.Publish(event.Event{
 				Topic:  event.TopicDeck,
 				Action: a,
@@ -615,10 +631,27 @@ func registerActions(registry *controller.ActionRegistry, bus *event.Bus) {
 		})
 	}
 
+	// beat_loop: parameterized beat-length action. Mappings specify the beat
+	// count in the YAML "value" field; the action registry forwards it via
+	// ctx.Value. Fallback is the engine's configured DefaultBeatLoop.
+	registry.Register(event.ActionBeatLoop, controller.ActionDescriptor{
+		Name: event.ActionBeatLoop, Type: controller.ActionTypeContinuous,
+	}, func(ctx controller.ActionContext) {
+		if !ctx.Pressed && ctx.Value == 0 {
+			return
+		}
+		bus.Publish(event.Event{
+			Topic:  event.TopicDeck,
+			Action: event.ActionBeatLoop,
+			DeckID: ctx.Deck,
+			Value:  ctx.Value,
+		})
+	})
+
 	// Stub actions for things defined in YAML but not yet implemented
 	stubs := []string{
 		"stutter", "jog_touch", "headphone_cue",
-		"loop_halve", "loop_double", "browse_back",
+		"browse_back",
 	}
 	for i := 1; i <= 8; i++ {
 		stubs = append(stubs, fmt.Sprintf("hotcue_%d", i))
