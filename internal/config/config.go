@@ -4,9 +4,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+// DefaultDeviceSentinel is a value users can set in device fields to request
+// the system default (equivalent to leaving the field empty).
+const DefaultDeviceSentinel = "DEFAULT"
 
 const defaultConfigPath = "configs/boom.yaml"
 
@@ -72,18 +77,84 @@ func Load() (*Config, error) {
 }
 
 // LoadFrom reads a YAML config file and merges it into the provided config.
+// Missing or invalid fields are filled with defaults; if anything had to be
+// repaired, the corrected config is written back to disk.
 func LoadFrom(path string, cfg *Config) (*Config, error) {
+	fileMissing := false
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return cfg, nil
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("read config: %w", err)
 		}
-		return nil, fmt.Errorf("read config: %w", err)
-	}
-	if err := yaml.Unmarshal(data, cfg); err != nil {
+		fileMissing = true
+	} else if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+
+	changed := cfg.Validate()
+	if fileMissing || changed {
+		if saveErr := cfg.SaveTo(path); saveErr != nil {
+			return cfg, fmt.Errorf("persist config defaults: %w", saveErr)
+		}
+	}
 	return cfg, nil
+}
+
+// Validate fills missing or invalid fields with sensible defaults and
+// normalizes sentinel values (e.g. "DEFAULT" device names). It returns true
+// when the config was mutated so callers can choose to persist the result.
+func (c *Config) Validate() bool {
+	defaults := DefaultConfig()
+	changed := false
+
+	if c.SampleRate <= 0 {
+		c.SampleRate = defaults.SampleRate
+		changed = true
+	}
+	if c.BufferSize <= 0 {
+		c.BufferSize = defaults.BufferSize
+		changed = true
+	}
+	if c.NumDecks <= 0 {
+		c.NumDecks = defaults.NumDecks
+		changed = true
+	}
+	if len(c.MusicDirs) == 0 {
+		c.MusicDirs = defaults.MusicDirs
+		changed = true
+	}
+	if c.DatabasePath == "" {
+		c.DatabasePath = defaults.DatabasePath
+		changed = true
+	}
+	if c.MIDIMappingDir == "" {
+		c.MIDIMappingDir = defaults.MIDIMappingDir
+		changed = true
+	}
+	if c.MasterVolume < 0 || c.MasterVolume > 1 {
+		c.MasterVolume = defaults.MasterVolume
+		changed = true
+	}
+	if c.HeadphoneVolume < 0 || c.HeadphoneVolume > 1 {
+		c.HeadphoneVolume = defaults.HeadphoneVolume
+		changed = true
+	}
+	if c.BPMRange == "" {
+		c.BPMRange = defaults.BPMRange
+		changed = true
+	}
+
+	// Normalize the "DEFAULT" sentinel to an empty string so downstream code
+	// only has to check one representation. Done silently — we don't flag this
+	// as a change so users keep whichever spelling they wrote in the file.
+	if strings.EqualFold(c.AudioOutputDevice, DefaultDeviceSentinel) {
+		c.AudioOutputDevice = ""
+	}
+	if strings.EqualFold(c.CueOutputDevice, DefaultDeviceSentinel) {
+		c.CueOutputDevice = ""
+	}
+
+	return changed
 }
 
 // Save writes the current configuration to the default config file.

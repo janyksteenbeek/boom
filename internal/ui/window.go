@@ -16,6 +16,7 @@ import (
 	"github.com/janyksteenbeek/boom/internal/ui/beatgrid"
 	"github.com/janyksteenbeek/boom/internal/ui/browser"
 	"github.com/janyksteenbeek/boom/internal/ui/deck"
+	"github.com/janyksteenbeek/boom/internal/ui/fxbar"
 	"github.com/janyksteenbeek/boom/internal/ui/mixer"
 	"github.com/janyksteenbeek/boom/internal/ui/settings"
 	boomtheme "github.com/janyksteenbeek/boom/internal/ui/theme"
@@ -30,6 +31,7 @@ type Window struct {
 	deck1    *deck.DeckView
 	deck2    *deck.DeckView
 	mixer    *mixer.MixerView
+	fxBar    *fxbar.FXBarView
 	browser  *browser.BrowserView
 	beatGrid *beatgrid.BeatGridStrip
 	onSettingsSave func(*config.Config)
@@ -51,6 +53,7 @@ func NewWindow(bus *event.Bus, cfg *config.Config) *Window {
 		deck1:    deck.NewDeckView(1, bus),
 		deck2:    deck.NewDeckView(2, bus),
 		mixer:    mixer.NewMixerView(bus),
+		fxBar:    fxbar.NewFXBarView(bus),
 		browser:  browser.NewBrowserView(bus),
 		beatGrid: beatgrid.NewBeatGridStrip(bus),
 	}
@@ -94,10 +97,15 @@ func NewWindow(bus *event.Bus, cfg *config.Config) *Window {
 	decksRow := container.NewHSplit(win.deck1, rightSide)
 	decksRow.SetOffset(0.5)
 
-	mainContent := container.NewVSplit(
-		decksRow,
-		container.NewBorder(hSep, nil, nil, nil, win.browser),
+	fxBarSep := canvas.NewRectangle(boomtheme.ColorSeparator)
+	fxBarSep.SetMinSize(fyne.NewSize(0, 1))
+
+	browserArea := container.NewBorder(
+		container.NewVBox(hSep, win.fxBar, fxBarSep),
+		nil, nil, nil,
+		win.browser,
 	)
+	mainContent := container.NewVSplit(decksRow, browserArea)
 	mainContent.SetOffset(0.55)
 
 	beatGridSep := canvas.NewRectangle(boomtheme.ColorSeparator)
@@ -179,22 +187,22 @@ func (w *Window) subscribeEvents() {
 		// in that case route through the mixer's current FX target.
 		switch ev.Action {
 		case event.ActionFXTime:
-			w.mixer.UpdateFXTime(ev.Value)
+			w.fxBar.UpdateFXTime(ev.Value)
 			return nil
 		case event.ActionFXWetDry:
 			if ev.DeckID == event.DeckIDUnresolved {
-				w.mixer.HandleMIDIFXWetDry(ev.Value)
+				w.fxBar.HandleMIDIFXWetDry(ev.Value)
 			} else {
-				w.mixer.UpdateFXWetDry(ev.Value)
+				w.fxBar.UpdateFXWetDry(ev.Value)
 			}
 			return nil
 		case event.ActionFXActivate:
 			if ev.DeckID == event.DeckIDUnresolved {
-				w.mixer.HandleMIDIFXActivate()
+				w.fxBar.HandleMIDIFXActivate()
 			}
 			return nil
 		case event.ActionFXNext:
-			w.mixer.HandleMIDIFXNext()
+			w.fxBar.HandleMIDIFXNext()
 			return nil
 		}
 
