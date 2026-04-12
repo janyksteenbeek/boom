@@ -133,13 +133,28 @@ func (e *Engine) subscribeEvents() {
 
 		switch ev.Action {
 		case event.ActionPlayPause:
-			deck.TogglePlay()
-			e.bus.PublishAsync(event.Event{
-				Topic: event.TopicEngine, Action: event.ActionPlayState,
-				DeckID: ev.DeckID, Value: boolToFloat(deck.IsPlaying()),
-			})
+			// CUE+PLAY = cue release latch: kap de preview-snapback en forceer playing
+			if deck.CueHeld() {
+				deck.SetCuePreview(false)
+				if !deck.IsPlaying() {
+					deck.Play()
+				}
+				e.bus.PublishAsync(event.Event{
+					Topic: event.TopicEngine, Action: event.ActionPlayState,
+					DeckID: ev.DeckID, Value: 1.0,
+				})
+			} else {
+				deck.TogglePlay()
+				e.bus.PublishAsync(event.Event{
+					Topic: event.TopicEngine, Action: event.ActionPlayState,
+					DeckID: ev.DeckID, Value: boolToFloat(deck.IsPlaying()),
+				})
+			}
 
 		case event.ActionPlay:
+			if deck.CueHeld() {
+				deck.SetCuePreview(false) // latch
+			}
 			deck.Play()
 			e.bus.PublishAsync(event.Event{
 				Topic: event.TopicEngine, Action: event.ActionPlayState,
@@ -152,6 +167,54 @@ func (e *Engine) subscribeEvents() {
 				Topic: event.TopicEngine, Action: event.ActionPlayState,
 				DeckID: ev.DeckID, Value: 0.0,
 			})
+
+		case event.ActionCue:
+			if deck.Track() == nil {
+				return nil
+			}
+			if ev.Pressed {
+				deck.SetCueHeld(true)
+				if deck.IsPlaying() {
+					// Playing → set new cue point at current position. No audio change.
+					newPos := deck.Position()
+					deck.SetCuePoint(newPos)
+					e.publishCuePointChanged(deck, newPos)
+					deck.SetCuePreview(false)
+				} else {
+					// Paused → jump to cue + start preview. A quick release lands you
+					// "at the cue, paused"; holding keeps the preview running until release.
+					target := deck.CuePoint()
+					if target < 0 {
+						target = 0
+					}
+					deck.Seek(target)
+					deck.Play()
+					deck.SetCuePreview(true)
+					e.bus.PublishAsync(event.Event{
+						Topic: event.TopicEngine, Action: event.ActionPlayState,
+						DeckID: ev.DeckID, Value: 1.0,
+					})
+				}
+			} else {
+				deck.SetCueHeld(false)
+				if deck.CuePreview() {
+					target := deck.CuePoint()
+					if target < 0 {
+						target = 0
+					}
+					deck.Pause()
+					deck.Seek(target)
+					deck.SetCuePreview(false)
+					e.bus.PublishAsync(event.Event{
+						Topic: event.TopicEngine, Action: event.ActionPlayState,
+						DeckID: ev.DeckID, Value: 0.0,
+					})
+				}
+			}
+
+		case event.ActionCueDelete:
+			deck.ClearCue()
+			e.publishCuePointChanged(deck, -1)
 
 		case event.ActionSeek:
 			deck.Seek(ev.Value)
@@ -200,6 +263,12 @@ func (e *Engine) subscribeEvents() {
 			go func() {
 				err := deck.LoadTrack(track)
 				if err == nil {
+					if track.HasCuePoint() {
+						deck.SetCuePoint(track.CuePoint)
+					} else {
+						deck.ClearCue()
+					}
+					e.publishCuePointChanged(deck, deck.CuePoint())
 					deck.Play()
 					e.bus.PublishAsync(event.Event{
 						Topic: event.TopicEngine, Action: event.ActionPlayState,
@@ -300,4 +369,20 @@ func boolToFloat(b bool) float64 {
 		return 1.0
 	}
 	return 0.0
+}
+
+// publishCuePointChanged broadcasts a cue point update so the UI can refresh
+// the marker and the app layer can persist it to the database.
+func (e *Engine) publishCuePointChanged(deck *Deck, pos float64) {
+	var trackID string
+	if t := deck.Track(); t != nil {
+		trackID = t.ID
+	}
+	e.bus.PublishAsync(event.Event{
+		Topic:   event.TopicEngine,
+		Action:  event.ActionCuePointChanged,
+		DeckID:  deck.ID(),
+		Value:   pos,
+		Payload: trackID,
+	})
 }

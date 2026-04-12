@@ -166,6 +166,10 @@ func (w *Window) subscribeEvents() {
 			if d != nil {
 				d.SetPlaying(ev.Value > 0.5)
 			}
+		case event.ActionCuePointChanged:
+			if d != nil {
+				d.UpdateCuePoint(ev.Value)
+			}
 		}
 		return nil
 	})

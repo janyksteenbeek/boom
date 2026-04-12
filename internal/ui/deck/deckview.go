@@ -86,9 +86,26 @@ func NewDeckView(deckID int, bus *event.Bus) *DeckView {
 	d.playBtn = components.NewDJButton("PLAY", boomtheme.ColorPlayActive, func() {
 		bus.Publish(event.Event{Topic: event.TopicDeck, Action: event.ActionPlayPause, DeckID: deckID})
 	})
-	d.cueBtn = components.NewDJButton("CUE", boomtheme.ColorCueActive, func() {
-		bus.Publish(event.Event{Topic: event.TopicDeck, Action: event.ActionCue, DeckID: deckID})
-	})
+	// CUE button: press/release for hold-to-preview, right-click to remove the cue point.
+	d.cueBtn = components.NewDJButton("CUE", boomtheme.ColorCueActive, nil)
+	d.cueBtn.OnPressed = func() {
+		bus.Publish(event.Event{
+			Topic: event.TopicDeck, Action: event.ActionCue,
+			DeckID: deckID, Pressed: true,
+		})
+	}
+	d.cueBtn.OnReleased = func() {
+		bus.Publish(event.Event{
+			Topic: event.TopicDeck, Action: event.ActionCue,
+			DeckID: deckID, Pressed: false,
+		})
+	}
+	d.cueBtn.OnSecondary = func() {
+		bus.Publish(event.Event{
+			Topic: event.TopicDeck, Action: event.ActionCueDelete,
+			DeckID: deckID,
+		})
+	}
 	d.syncBtn = components.NewDJButton("SYNC", boomtheme.ColorSyncActive, func() {
 		bus.Publish(event.Event{Topic: event.TopicDeck, Action: event.ActionSync, DeckID: deckID})
 	})
@@ -168,6 +185,12 @@ func NewDeckView(deckID int, bus *event.Bus) *DeckView {
 
 func (d *DeckView) UpdatePosition(pos float64) {
 	d.waveform.SetPosition(pos)
+}
+
+// UpdateCuePoint refreshes the visual cue marker on the waveform.
+// Pass a negative value to hide it.
+func (d *DeckView) UpdateCuePoint(pos float64) {
+	d.waveform.SetCuePoint(pos)
 }
 
 func (d *DeckView) SetWaveformData(data *audio.WaveformData) {

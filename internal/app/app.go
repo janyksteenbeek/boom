@@ -139,14 +139,23 @@ func New() (*App, error) {
 		stopCh:   make(chan struct{}),
 	}
 
-	// Wire LED feedback: when play state changes, update controller LEDs
+	// Wire DB persistence for cue point changes. Play/cue LED state is driven
+	// by ledFeedbackLoop because both can be in a blinking state — event-based
+	// updates can't express that.
 	bus.Subscribe(event.TopicEngine, func(ev event.Event) error {
-		switch ev.Action {
-		case event.ActionPlayState:
-			playing := ev.Value > 0.5
-			ledMgr.Update("play_pause", ev.DeckID, playing)
-			log.Printf("LED: play_pause deck=%d playing=%v", ev.DeckID, playing)
+		if ev.Action != event.ActionCuePointChanged {
+			return nil
 		}
+		trackID, _ := ev.Payload.(string)
+		if trackID == "" {
+			return nil
+		}
+		pos := ev.Value
+		go func() {
+			if err := store.UpdateCuePoint(trackID, pos); err != nil {
+				log.Printf("cue: persist failed for %s: %v", trackID, err)
+			}
+		}()
 		return nil
 	})
 
@@ -205,8 +214,9 @@ func (a *App) Run() {
 		a.window.Browser().SetGenres(genres)
 	}()
 
-	// Start VU meter output to controller
+	// Start VU meter + LED feedback output to controller
 	go a.vuMeterLoop()
+	go a.ledFeedbackLoop()
 
 	// Run UI (blocks)
 	a.window.Run()
@@ -224,6 +234,81 @@ func (a *App) shutdown() {
 	a.midi.Stop()
 	a.loader.Close()
 	a.library.Close()
+}
+
+// ledFeedbackLoop drives the per-deck PLAY and CUE LEDs. Both can be in a
+// blinking state, so we poll deck state every 50 ms and recompute. MIDI is
+// only sent on edge transitions to keep bus traffic minimal.
+//
+// PLAY LED:
+//
+//	off       — no track loaded
+//	solid     — playing
+//	blinking  — paused (ready to play)
+//
+// CUE LED:
+//
+//	off       — playing, or no track / no cue point
+//	solid     — paused at the cue point, or in cue-hold preview
+//
+// Blinking is software-driven at ~500 ms (1 Hz) because the DDJ-FLX4 buttons
+// have no native firmware blink mode.
+func (a *App) ledFeedbackLoop() {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	var lastPlay, lastCue [audio.NumDecks]bool
+	var initialized [audio.NumDecks]bool
+
+	for {
+		select {
+		case <-a.stopCh:
+			return
+		case <-ticker.C:
+			phaseOn := (time.Now().UnixMilli()/500)%2 == 0
+			for i := 0; i < audio.NumDecks; i++ {
+				deck := a.engine.Deck(i + 1)
+				if deck == nil {
+					continue
+				}
+				hasTrack := deck.Track() != nil
+				playing := deck.IsPlaying()
+				preview := deck.CuePreview()
+
+				var playOn, cueOn bool
+				switch {
+				case !hasTrack:
+					playOn = false
+				case playing && !preview:
+					playOn = true
+				default:
+					playOn = phaseOn // paused (or preview) → blink
+				}
+				switch {
+				case !hasTrack:
+					cueOn = false
+				case preview:
+					cueOn = true
+				case playing:
+					cueOn = false
+				case deck.AtCue():
+					cueOn = true
+				default:
+					cueOn = false
+				}
+
+				if !initialized[i] || playOn != lastPlay[i] {
+					lastPlay[i] = playOn
+					a.ledMgr.Update("play_pause", i+1, playOn)
+				}
+				if !initialized[i] || cueOn != lastCue[i] {
+					lastCue[i] = cueOn
+					a.ledMgr.Update("cue", i+1, cueOn)
+				}
+				initialized[i] = true
+			}
+		}
+	}
 }
 
 // vuMeterLoop sends VU meter levels to the DDJ-FLX4 at ~20Hz.
@@ -257,10 +342,10 @@ func (a *App) vuMeterLoop() {
 
 // registerActions maps standard DJ actions to event bus events.
 func registerActions(registry *controller.ActionRegistry, bus *event.Bus) {
-	// Deck trigger actions
+	// Deck trigger actions (press-only — fire once per push)
 	for _, action := range []string{
 		event.ActionPlayPause, event.ActionPlay, event.ActionPause,
-		event.ActionCue, event.ActionSync,
+		event.ActionSync,
 		event.ActionLoopIn, event.ActionLoopOut, event.ActionLoopToggle,
 	} {
 		a := action
@@ -277,6 +362,32 @@ func registerActions(registry *controller.ActionRegistry, bus *event.Bus) {
 			})
 		})
 	}
+
+	// CUE: needs both press AND release for hold-to-preview / cue-release latch
+	registry.Register(event.ActionCue, controller.ActionDescriptor{
+		Name: event.ActionCue, Type: controller.ActionTypeTrigger,
+	}, func(ctx controller.ActionContext) {
+		bus.Publish(event.Event{
+			Topic:   event.TopicDeck,
+			Action:  event.ActionCue,
+			DeckID:  ctx.Deck,
+			Pressed: ctx.Pressed,
+		})
+	})
+
+	// CUE delete (Rekordbox-style memory cue removal). Press-only.
+	registry.Register(event.ActionCueDelete, controller.ActionDescriptor{
+		Name: event.ActionCueDelete, Type: controller.ActionTypeTrigger,
+	}, func(ctx controller.ActionContext) {
+		if !ctx.Pressed {
+			return
+		}
+		bus.Publish(event.Event{
+			Topic:  event.TopicDeck,
+			Action: event.ActionCueDelete,
+			DeckID: ctx.Deck,
+		})
+	})
 
 	// Continuous deck actions
 	for _, action := range []string{

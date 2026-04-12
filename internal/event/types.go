@@ -15,11 +15,13 @@ const (
 
 // Deck actions.
 const (
-	ActionPlay         = "play"
-	ActionPause        = "pause"
-	ActionPlayPause    = "play_pause"
-	ActionCue          = "cue"
-	ActionSeek         = "seek"
+	ActionPlay            = "play"
+	ActionPause           = "pause"
+	ActionPlayPause       = "play_pause"
+	ActionCue             = "cue"
+	ActionCueDelete       = "cue_delete"
+	ActionCuePointChanged = "cue_point_changed"
+	ActionSeek            = "seek"
 	ActionLoadTrack    = "load_track"
 	ActionTrackLoaded  = "track_loaded"
 	ActionVolumeChange = "volume_change"
@@ -110,5 +112,6 @@ type Event struct {
 	Action  string
 	DeckID  int         // 0=master, 1=deck1, 2=deck2
 	Value   float64     // Normalized 0.0-1.0 for continuous, 1.0/0.0 for toggle
+	Pressed bool        // True for press events, false for release (button-style triggers)
 	Payload interface{} // Optional typed payload
 }

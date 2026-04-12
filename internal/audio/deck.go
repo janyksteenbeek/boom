@@ -49,6 +49,11 @@ type Deck struct {
 	playing   atomic.Bool
 	tempoBits atomic.Uint64 // float64 as bits, ratio
 
+	// Cue point state — written by UI/MIDI threads via the engine
+	cuePoint    atomic.Uint64 // float64 bits, normalized 0..1; negative = unset
+	cueHeld     atomic.Bool   // CUE button currently held down
+	cuePreview  atomic.Bool   // playing because of CUE-hold preview (release → snap back)
+
 	// Pending commands from non-audio threads (written by UI/MIDI, consumed by audio thread)
 	pendingSeek  atomic.Uint64 // float64 bits; NaN = no pending seek
 	pendingFade  atomic.Int32  // 0=none, 1=fade-in, 2=fade-out
@@ -74,6 +79,7 @@ func NewDeck(id int, sampleRate int, bus *event.Bus) *Deck {
 	d.gain.Init(1.0, sampleRate, 0.005)
 	d.storeFloat(&d.tempoBits, 1.0)
 	d.storeFloat(&d.pendingSeek, math.NaN()) // sentinel: no pending seek
+	d.storeFloat(&d.cuePoint, -1)            // sentinel: no cue set
 	return d
 }
 
@@ -126,6 +132,9 @@ func (d *Deck) LoadTrack(track *model.Track) error {
 	d.playing.Store(false)
 	d.pendingFade.Store(0)                                // clear any pending fade
 	d.storeFloat(&d.pendingSeek, math.NaN())              // clear any pending seek
+	d.cueHeld.Store(false)
+	d.cuePreview.Store(false)
+	// cuePoint is set by the engine after LoadTrack returns (from track.CuePoint).
 	d.pcm.Store(&pcmBuffer{samples: pcm, len: len(pcm)}) // swap buffer
 	d.track.Store(track)
 	d.pendingReset.Store(true)                             // signal audio thread to reset pos/fade/EQ
@@ -214,6 +223,52 @@ func (d *Deck) Seek(pos float64) {
 		pos = 1
 	}
 	d.storeFloat(&d.pendingSeek, pos) // audio thread will apply
+}
+
+// CuePoint returns the current cue point as a normalized 0..1 fraction,
+// or a negative value if no cue is set.
+func (d *Deck) CuePoint() float64 { return d.loadFloat(&d.cuePoint) }
+
+// SetCuePoint stores a new cue point. Pass a negative value (or call ClearCue)
+// to mark the cue as unset.
+func (d *Deck) SetCuePoint(p float64) {
+	if p > 1 {
+		p = 1
+	}
+	d.storeFloat(&d.cuePoint, p)
+}
+
+// HasCue reports whether a cue point is currently set.
+func (d *Deck) HasCue() bool { return d.CuePoint() >= 0 }
+
+// ClearCue removes the cue point.
+func (d *Deck) ClearCue() { d.storeFloat(&d.cuePoint, -1) }
+
+// CueHeld reports whether the CUE button is currently held down.
+func (d *Deck) CueHeld() bool { return d.cueHeld.Load() }
+
+// SetCueHeld marks the CUE button as held / released.
+func (d *Deck) SetCueHeld(v bool) { d.cueHeld.Store(v) }
+
+// CuePreview reports whether playback is currently a cue-hold preview
+// (will snap back to cue on release unless latched by PLAY).
+func (d *Deck) CuePreview() bool { return d.cuePreview.Load() }
+
+// SetCuePreview marks the current playback as a cue-hold preview.
+func (d *Deck) SetCuePreview(v bool) { d.cuePreview.Store(v) }
+
+// AtCue reports whether the playhead is at the cue point within a
+// ~50 ms tolerance. Returns false when no cue is set or no track is loaded.
+func (d *Deck) AtCue() bool {
+	if !d.HasCue() {
+		return false
+	}
+	p := d.pcm.Load()
+	if p == nil || p.len == 0 {
+		return false
+	}
+	eps := float64(d.sampleRate) * 0.05 / float64(p.len)
+	return math.Abs(d.Position()-d.CuePoint()) <= eps
 }
 
 func (d *Deck) Position() float64 {

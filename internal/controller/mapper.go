@@ -49,8 +49,11 @@ func NewMapper(compiled *CompiledMapping, registry *ActionRegistry) *Mapper {
 
 // HandleNoteOn processes a MIDI Note On message.
 func (m *Mapper) HandleNoteOn(channel, note, velocity uint8) {
-	// NoteOn with velocity 0 = NoteOff in MIDI spec. Ignore for buttons.
+	// NoteOn with velocity 0 == NoteOff in the MIDI spec. Many controllers
+	// (including the Pioneer DDJ-FLX4) only ever send these instead of true
+	// NoteOff messages, so forward them to the release path.
 	if velocity == 0 {
+		m.HandleNoteOff(channel, note)
 		return
 	}
 

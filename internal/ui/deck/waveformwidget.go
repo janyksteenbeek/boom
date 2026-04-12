@@ -21,13 +21,28 @@ type WaveformWidget struct {
 	peaksMid  []float64
 	peaksHigh []float64
 	position  float64
+	cuePoint  float64 // -1 = unset
 	deckID    int
 }
 
 func NewWaveformWidget(deckID int) *WaveformWidget {
-	w := &WaveformWidget{deckID: deckID}
+	w := &WaveformWidget{deckID: deckID, cuePoint: -1}
 	w.ExtendBaseWidget(w)
 	return w
+}
+
+// SetCuePoint updates the cue marker position. Pass a negative value to hide it.
+func (w *WaveformWidget) SetCuePoint(p float64) {
+	w.mu.Lock()
+	if w.cuePoint == p {
+		w.mu.Unlock()
+		return
+	}
+	w.cuePoint = p
+	w.mu.Unlock()
+	fyne.Do(func() {
+		w.Refresh()
+	})
 }
 
 func (w *WaveformWidget) SetFrequencyPeaks(low, mid, high []float64) {
@@ -76,6 +91,7 @@ type waveformRenderer struct {
 	barsMid  []*canvas.Line
 	barsHigh []*canvas.Line
 	head     *canvas.Line
+	cueMark  *canvas.Line
 	size     fyne.Size
 }
 
@@ -119,6 +135,10 @@ func (r *waveformRenderer) buildObjects() {
 	r.head = canvas.NewLine(boomtheme.ColorPlayhead)
 	r.head.StrokeWidth = 1.5
 	r.head.Hidden = true
+
+	r.cueMark = canvas.NewLine(boomtheme.ColorCueActive)
+	r.cueMark.StrokeWidth = 2
+	r.cueMark.Hidden = true
 }
 
 func (r *waveformRenderer) Layout(size fyne.Size) {
@@ -158,6 +178,7 @@ func (r *waveformRenderer) Refresh() {
 	peaksMid := r.widget.peaksMid
 	peaksHigh := r.widget.peaksHigh
 	position := r.widget.position
+	cuePoint := r.widget.cuePoint
 	r.widget.mu.RUnlock()
 
 	size := r.widget.Size()
@@ -288,6 +309,17 @@ func (r *waveformRenderer) Refresh() {
 		r.head.Position1 = fyne.NewPos(posX, 0)
 		r.head.Position2 = fyne.NewPos(posX, size.Height)
 		r.head.Refresh()
+
+		// Cue marker — vertical line at the saved cue point
+		if cuePoint >= 0 {
+			cueX := float32(cuePoint) * size.Width
+			r.cueMark.Position1 = fyne.NewPos(cueX, 0)
+			r.cueMark.Position2 = fyne.NewPos(cueX, size.Height)
+			r.cueMark.Hidden = false
+			r.cueMark.Refresh()
+		} else {
+			r.cueMark.Hidden = true
+		}
 	} else {
 		for _, b := range r.barsLow {
 			b.Hidden = true
@@ -298,6 +330,7 @@ func (r *waveformRenderer) Refresh() {
 		for _, b := range r.barsHigh {
 			b.Hidden = true
 		}
+		r.cueMark.Hidden = true
 	}
 
 	r.bg.Refresh()
@@ -325,6 +358,7 @@ func (r *waveformRenderer) Objects() []fyne.CanvasObject {
 		objs = append(objs, b)
 	}
 	objs = append(objs, r.head)
+	objs = append(objs, r.cueMark)
 	return objs
 }
 

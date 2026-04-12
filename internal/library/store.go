@@ -77,14 +77,19 @@ func (s *Store) migrate() error {
 	s.db.Exec(`ALTER TABLE tracks ADD COLUMN analyzed_at TEXT NOT NULL DEFAULT ''`)
 	s.db.Exec(`ALTER TABLE tracks ADD COLUMN beat_grid TEXT NOT NULL DEFAULT ''`)
 
+	// v3: cue point (-1 sentinel = unset)
+	s.db.Exec(`ALTER TABLE tracks ADD COLUMN cue_point REAL NOT NULL DEFAULT -1`)
+
 	return nil
 }
 
 // UpsertTrack inserts or updates a track in the database.
+// Note: cue_point is intentionally NOT touched on conflict so we don't blow
+// away a saved cue point during a re-scan.
 func (s *Store) UpsertTrack(t *model.Track) error {
 	_, err := s.db.Exec(`
-		INSERT INTO tracks (id, path, title, artist, album, genre, bpm, key, duration, bitrate, format, size, source, added_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO tracks (id, path, title, artist, album, genre, bpm, key, duration, bitrate, format, size, source, added_at, cue_point)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET
 			title=excluded.title, artist=excluded.artist, album=excluded.album,
 			genre=excluded.genre, bpm=excluded.bpm, key=excluded.key,
@@ -92,9 +97,19 @@ func (s *Store) UpsertTrack(t *model.Track) error {
 			size=excluded.size
 	`, t.ID, t.Path, t.Title, t.Artist, t.Album, t.Genre, t.BPM, t.Key,
 		t.Duration.Milliseconds(), t.Bitrate, t.Format, t.Size, t.Source,
-		t.AddedAt.Format(time.RFC3339))
+		t.AddedAt.Format(time.RFC3339), t.CuePoint)
 	if err != nil {
 		return fmt.Errorf("upsert track: %w", err)
+	}
+	return nil
+}
+
+// UpdateCuePoint persists the cue point for a track. Pass a negative value
+// (e.g. -1) to clear the cue point.
+func (s *Store) UpdateCuePoint(trackID string, pos float64) error {
+	_, err := s.db.Exec(`UPDATE tracks SET cue_point = ? WHERE id = ?`, pos, trackID)
+	if err != nil {
+		return fmt.Errorf("update cue point: %w", err)
 	}
 	return nil
 }
@@ -106,7 +121,7 @@ func (s *Store) Search(query string, limit int) ([]model.Track, error) {
 	}
 	pattern := "%" + query + "%"
 	rows, err := s.db.Query(`
-		SELECT id, path, title, artist, album, genre, bpm, key, duration, bitrate, format, size, source, added_at
+		SELECT id, path, title, artist, album, genre, bpm, key, duration, bitrate, format, size, source, added_at, cue_point
 		FROM tracks
 		WHERE title LIKE ? OR artist LIKE ? OR album LIKE ?
 		ORDER BY title ASC
@@ -125,7 +140,7 @@ func (s *Store) AllTracks(offset, limit int) ([]model.Track, error) {
 		limit = 100
 	}
 	rows, err := s.db.Query(`
-		SELECT id, path, title, artist, album, genre, bpm, key, duration, bitrate, format, size, source, added_at
+		SELECT id, path, title, artist, album, genre, bpm, key, duration, bitrate, format, size, source, added_at, cue_point
 		FROM tracks
 		ORDER BY added_at DESC, title ASC
 		LIMIT ? OFFSET ?
@@ -140,7 +155,7 @@ func (s *Store) AllTracks(offset, limit int) ([]model.Track, error) {
 // GetByPath returns a track by its file path.
 func (s *Store) GetByPath(path string) (*model.Track, error) {
 	row := s.db.QueryRow(`
-		SELECT id, path, title, artist, album, genre, bpm, key, duration, bitrate, format, size, source, added_at
+		SELECT id, path, title, artist, album, genre, bpm, key, duration, bitrate, format, size, source, added_at, cue_point
 		FROM tracks WHERE path = ?
 	`, path)
 	t, err := scanTrack(row)
@@ -181,7 +196,7 @@ func (s *Store) TracksByGenre(genre string, limit int) ([]model.Track, error) {
 		limit = 500
 	}
 	rows, err := s.db.Query(`
-		SELECT id, path, title, artist, album, genre, bpm, key, duration, bitrate, format, size, source, added_at
+		SELECT id, path, title, artist, album, genre, bpm, key, duration, bitrate, format, size, source, added_at, cue_point
 		FROM tracks WHERE genre = ?
 		ORDER BY artist ASC, title ASC
 		LIMIT ?
@@ -199,7 +214,7 @@ func (s *Store) RecentTracks(limit int) ([]model.Track, error) {
 		limit = 100
 	}
 	rows, err := s.db.Query(`
-		SELECT id, path, title, artist, album, genre, bpm, key, duration, bitrate, format, size, source, added_at
+		SELECT id, path, title, artist, album, genre, bpm, key, duration, bitrate, format, size, source, added_at, cue_point
 		FROM tracks
 		ORDER BY added_at DESC
 		LIMIT ?
@@ -217,7 +232,7 @@ func (s *Store) TracksByBPMRange(low, high float64, limit int) ([]model.Track, e
 		limit = 500
 	}
 	rows, err := s.db.Query(`
-		SELECT id, path, title, artist, album, genre, bpm, key, duration, bitrate, format, size, source, added_at
+		SELECT id, path, title, artist, album, genre, bpm, key, duration, bitrate, format, size, source, added_at, cue_point
 		FROM tracks WHERE bpm >= ? AND bpm < ?
 		ORDER BY bpm ASC, title ASC
 		LIMIT ?
@@ -247,7 +262,7 @@ func (s *Store) UnanalyzedTracks(limit int) ([]model.Track, error) {
 		limit = 500
 	}
 	rows, err := s.db.Query(`
-		SELECT id, path, title, artist, album, genre, bpm, key, duration, bitrate, format, size, source, added_at
+		SELECT id, path, title, artist, album, genre, bpm, key, duration, bitrate, format, size, source, added_at, cue_point
 		FROM tracks WHERE analyzed_at = ''
 		ORDER BY title ASC
 		LIMIT ?
@@ -266,7 +281,7 @@ func scanTracks(rows *sql.Rows) ([]model.Track, error) {
 		var durMs int64
 		var addedStr string
 		err := rows.Scan(&t.ID, &t.Path, &t.Title, &t.Artist, &t.Album, &t.Genre,
-			&t.BPM, &t.Key, &durMs, &t.Bitrate, &t.Format, &t.Size, &t.Source, &addedStr)
+			&t.BPM, &t.Key, &durMs, &t.Bitrate, &t.Format, &t.Size, &t.Source, &addedStr, &t.CuePoint)
 		if err != nil {
 			return nil, fmt.Errorf("scan track: %w", err)
 		}
@@ -282,7 +297,7 @@ func scanTrack(row *sql.Row) (*model.Track, error) {
 	var durMs int64
 	var addedStr string
 	err := row.Scan(&t.ID, &t.Path, &t.Title, &t.Artist, &t.Album, &t.Genre,
-		&t.BPM, &t.Key, &durMs, &t.Bitrate, &t.Format, &t.Size, &t.Source, &addedStr)
+		&t.BPM, &t.Key, &durMs, &t.Bitrate, &t.Format, &t.Size, &t.Source, &addedStr, &t.CuePoint)
 	if err != nil {
 		return nil, err
 	}

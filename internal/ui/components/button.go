@@ -13,15 +13,22 @@ import (
 )
 
 // DJButton is a custom-drawn button with an active color indicator.
+//
+// OnTapped fires once on primary press (instant response, used by play/sync).
+// OnPressed/OnReleased give finer control for press-and-hold actions like CUE.
+// OnSecondary fires on right-click for context menus (e.g. cue removal).
 type DJButton struct {
 	widget.BaseWidget
 
-	mu       sync.RWMutex
-	text     string
-	active   bool
-	color    color.Color
-	hovered  bool
-	OnTapped func()
+	mu          sync.RWMutex
+	text        string
+	active      bool
+	color       color.Color
+	hovered     bool
+	OnTapped    func()
+	OnPressed   func()
+	OnReleased  func()
+	OnSecondary func()
 }
 
 func NewDJButton(text string, activeColor color.Color, onTapped func()) *DJButton {
@@ -54,12 +61,28 @@ func (b *DJButton) Tapped(_ *fyne.PointEvent) {
 
 // MouseDown fires immediately on press — more reliable than Tapped for DJ use.
 func (b *DJButton) MouseDown(ev *desktop.MouseEvent) {
-	if ev.Button == desktop.MouseButtonPrimary && b.OnTapped != nil {
+	if ev.Button == desktop.MouseButtonSecondary {
+		if b.OnSecondary != nil {
+			b.OnSecondary()
+		}
+		return
+	}
+	if ev.Button != desktop.MouseButtonPrimary {
+		return
+	}
+	if b.OnPressed != nil {
+		b.OnPressed()
+	}
+	if b.OnTapped != nil {
 		b.OnTapped()
 	}
 }
 
-func (b *DJButton) MouseUp(_ *desktop.MouseEvent) {}
+func (b *DJButton) MouseUp(ev *desktop.MouseEvent) {
+	if ev.Button == desktop.MouseButtonPrimary && b.OnReleased != nil {
+		b.OnReleased()
+	}
+}
 
 func (b *DJButton) MouseIn(_ *desktop.MouseEvent) {
 	b.mu.Lock()
