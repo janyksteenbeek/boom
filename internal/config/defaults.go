@@ -36,6 +36,11 @@ func DefaultConfig() *Config {
 			MaxBeats:        32,
 			SmartLoop:       true,
 		},
+		Jog: JogSettings{
+			VinylMode:          true,
+			ScratchSensitivity: 0.4,
+			PitchSensitivity:   0.04,
+		},
 	}
 }
 

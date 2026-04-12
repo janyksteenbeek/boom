@@ -66,6 +66,11 @@ func New() (*App, error) {
 		MaxBeats:        cfg.Loop.MaxBeats,
 		SmartLoop:       cfg.Loop.SmartLoop,
 	})
+	engine.SetJogOptions(audio.JogOptions{
+		VinylMode:          cfg.Jog.VinylMode,
+		ScratchSensitivity: cfg.Jog.ScratchSensitivity,
+		PitchSensitivity:   cfg.Jog.PitchSensitivity,
+	})
 
 	midiMgr := boomidi.NewManager(bus)
 
@@ -179,6 +184,11 @@ func New() (*App, error) {
 			MinBeats:        updatedCfg.Loop.MinBeats,
 			MaxBeats:        updatedCfg.Loop.MaxBeats,
 			SmartLoop:       updatedCfg.Loop.SmartLoop,
+		})
+		engine.SetJogOptions(audio.JogOptions{
+			VinylMode:          updatedCfg.Jog.VinylMode,
+			ScratchSensitivity: updatedCfg.Jog.ScratchSensitivity,
+			PitchSensitivity:   updatedCfg.Jog.PitchSensitivity,
 		})
 		go func() {
 			app.library.ScanDirs(updatedCfg.MusicDirs)
@@ -511,6 +521,33 @@ func registerActions(registry *controller.ActionRegistry, bus *event.Bus) {
 		})
 	}
 
+	// jog_touch: trigger with press AND release — release matters for
+	// snapping back to the captured play state in vinyl mode.
+	registry.Register(event.ActionJogTouch, controller.ActionDescriptor{
+		Name: event.ActionJogTouch, Type: controller.ActionTypeTrigger,
+	}, func(ctx controller.ActionContext) {
+		bus.Publish(event.Event{
+			Topic:   event.TopicDeck,
+			Action:  event.ActionJogTouch,
+			DeckID:  ctx.Deck,
+			Pressed: ctx.Pressed,
+		})
+	})
+
+	// vinyl_mode: press-only toggle.
+	registry.Register(event.ActionVinylMode, controller.ActionDescriptor{
+		Name: event.ActionVinylMode, Type: controller.ActionTypeTrigger,
+	}, func(ctx controller.ActionContext) {
+		if !ctx.Pressed {
+			return
+		}
+		bus.Publish(event.Event{
+			Topic:  event.TopicDeck,
+			Action: event.ActionVinylMode,
+			DeckID: ctx.Deck,
+		})
+	})
+
 	// Mixer actions
 	registry.Register(event.ActionCrossfader, controller.ActionDescriptor{
 		Name: event.ActionCrossfader, Type: controller.ActionTypeContinuous,
@@ -679,7 +716,7 @@ func registerActions(registry *controller.ActionRegistry, bus *event.Bus) {
 
 	// Stub actions for things defined in YAML but not yet implemented
 	stubs := []string{
-		"stutter", "jog_touch", "headphone_cue",
+		"stutter", "headphone_cue",
 		"browse_back",
 	}
 	for i := 1; i <= 8; i++ {

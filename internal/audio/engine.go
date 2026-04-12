@@ -35,6 +35,13 @@ type LoopOptions struct {
 	SmartLoop       bool
 }
 
+// JogOptions mirrors config.JogSettings — same reason.
+type JogOptions struct {
+	VinylMode          bool
+	ScratchSensitivity float64
+	PitchSensitivity   float64
+}
+
 type Engine struct {
 	bus        *event.Bus
 	decks      [NumDecks]*Deck
@@ -70,6 +77,15 @@ func (e *Engine) SetLoopOptions(opts LoopOptions) {
 		opts.DefaultBeatLoop = 4
 	}
 	e.loopOpt.Store(&opts)
+}
+
+// SetJogOptions pushes vinyl mode + scratch/pitch sensitivities to all decks.
+func (e *Engine) SetJogOptions(opts JogOptions) {
+	for _, d := range e.decks {
+		d.SetVinylMode(opts.VinylMode)
+		d.SetJogScratchSensitivity(opts.ScratchSensitivity)
+		d.SetJogPitchSensitivity(opts.PitchSensitivity)
+	}
 }
 
 func (e *Engine) loopOptions() LoopOptions {
@@ -526,6 +542,28 @@ func (e *Engine) subscribeEvents() {
 			if e.applyBeatLoop(deck, ev.Value) {
 				e.publishLoopState(deck)
 			}
+
+		case event.ActionVinylMode:
+			deck.ToggleVinylMode()
+			e.bus.PublishAsync(event.Event{
+				Topic: event.TopicEngine, Action: event.ActionVinylModeChanged,
+				DeckID: ev.DeckID, Value: boolToFloat(deck.VinylMode()),
+			})
+
+		case event.ActionJogTouch:
+			deck.SetJogTouch(ev.Pressed)
+
+		case event.ActionJogScratch:
+			// Vinyl mode + top touch → scratch velocity. Otherwise (jog mode
+			// or side-only touch) the same encoder feeds the pitch bend.
+			if deck.VinylMode() && deck.JogTouched() {
+				deck.AddJogScratchDelta(ev.Value)
+			} else {
+				deck.AddJogPitchDelta(ev.Value)
+			}
+
+		case event.ActionJogPitch:
+			deck.AddJogPitchDelta(ev.Value)
 
 		case event.ActionLoadTrack:
 			track, ok := ev.Payload.(*model.Track)

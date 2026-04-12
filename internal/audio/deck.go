@@ -18,6 +18,18 @@ type pcmBuffer struct {
 	len     int
 }
 
+// Jog wheel decay tunables. Halflives are kept as constants — they affect
+// the *feel* of platter inertia and pitch bend rebound and rarely need user
+// tuning. The per-tick gains are exposed as per-deck atomics so the engine
+// can apply user settings.
+const (
+	jogScratchHalflifeMs = 100.0 // platter inertia decay
+	jogPitchHalflifeMs   = 220.0 // pitch bend rubber-band
+
+	defaultJogScratchSensitivity = 0.4  // dimensionless gain (matches tempo units)
+	defaultJogPitchSensitivity   = 0.04
+)
+
 // Deck represents one playback channel.
 // Audio is decoded fully upfront into a PCM buffer.
 // The audio callback only reads from this buffer — zero allocations, zero I/O.
@@ -68,6 +80,19 @@ type Deck struct {
 	loopBeats   atomic.Uint64
 	loopActive  atomic.Bool
 
+	// Jog wheel state — written by engine, consumed by Stream().
+	// vinylMode true = top touch enables scratch; false = all rotation is pitch bend.
+	// jogScratchVel is samples-per-output-sample (signed, decays each block).
+	// jogPitchOffset is an additive tempo delta (signed, decays each block).
+	// prevPlayingJog snapshots playing state on touch-down so release can restore it.
+	vinylMode          atomic.Bool
+	jogTouched         atomic.Bool
+	jogScratchVel      atomic.Uint64
+	jogPitchOffset     atomic.Uint64
+	jogScratchGainBits atomic.Uint64 // float64 bits, samples-per-sample per tick
+	jogPitchGainBits   atomic.Uint64 // float64 bits, tempo delta per tick
+	prevPlayingJog     atomic.Bool
+
 	// Pending commands from non-audio threads (written by UI/MIDI, consumed by audio thread)
 	pendingSeek  atomic.Uint64 // float64 bits; NaN = no pending seek
 	pendingFade  atomic.Int32  // 0=none, 1=fade-in, 2=fade-out
@@ -97,6 +122,11 @@ func NewDeck(id int, sampleRate int, bus *event.Bus) *Deck {
 	d.storeFloat(&d.loopStart, math.NaN())
 	d.storeFloat(&d.loopEnd, math.NaN())
 	d.storeFloat(&d.loopBeats, 0)
+	d.storeFloat(&d.jogScratchVel, 0)
+	d.storeFloat(&d.jogPitchOffset, 0)
+	d.storeFloat(&d.jogScratchGainBits, defaultJogScratchSensitivity)
+	d.storeFloat(&d.jogPitchGainBits, defaultJogPitchSensitivity)
+	d.vinylMode.Store(true) // default: classic CDJ scratch behavior
 	return d
 }
 
@@ -429,6 +459,101 @@ func (d *Deck) SetManualLoop(start, end, beats float64) {
 // SetLoopActive toggles the wrap flag without touching the boundaries.
 func (d *Deck) SetLoopActive(v bool) { d.loopActive.Store(v) }
 
+// ── Jog wheel state ──────────────────────────────────────────────────────────
+
+// VinylMode reports whether the deck is in vinyl mode (top touch enables
+// scratching). When false the deck is in CDJ "jog mode" — all rotation is
+// pitch bend.
+func (d *Deck) VinylMode() bool { return d.vinylMode.Load() }
+
+// SetVinylMode toggles vinyl mode. Switching to jog mode while the platter
+// is touched also clears the captured play state and any pending scratch
+// velocity so the deck snaps back to normal playback cleanly.
+func (d *Deck) SetVinylMode(on bool) {
+	d.vinylMode.Store(on)
+	if !on {
+		d.storeFloat(&d.jogScratchVel, 0)
+	}
+}
+
+// ToggleVinylMode flips vinyl mode and returns the new value.
+func (d *Deck) ToggleVinylMode() bool {
+	d.SetVinylMode(!d.VinylMode())
+	return d.VinylMode()
+}
+
+// JogTouched reports whether the top sensor of the platter is currently held.
+func (d *Deck) JogTouched() bool { return d.jogTouched.Load() }
+
+// SetJogTouch is called from the engine on platter top-touch press/release.
+// In vinyl mode the press captures the current play state and forces playing
+// = true so Stream() runs while the user scratches; the release restores
+// the captured state. In jog mode it's just a flag bookkeeping operation.
+func (d *Deck) SetJogTouch(on bool) {
+	if on {
+		if !d.jogTouched.Load() && d.vinylMode.Load() {
+			d.prevPlayingJog.Store(d.playing.Load())
+			d.playing.Store(true)
+		}
+		d.jogTouched.Store(true)
+		return
+	}
+	wasTouched := d.jogTouched.Swap(false)
+	if !wasTouched || !d.vinylMode.Load() {
+		return
+	}
+	d.storeFloat(&d.jogScratchVel, 0)
+	if !d.prevPlayingJog.Load() {
+		d.Pause()
+	}
+}
+
+// SetJogScratchSensitivity adjusts the per-tick scratch gain (samples-per-
+// output-sample contribution per encoder tick). Default 0.4. Higher = more
+// audio movement per platter increment.
+func (d *Deck) SetJogScratchSensitivity(g float64) {
+	if g <= 0 {
+		g = defaultJogScratchSensitivity
+	}
+	d.storeFloat(&d.jogScratchGainBits, g)
+}
+
+// SetJogPitchSensitivity adjusts the per-tick pitch bend gain. Default 0.04.
+func (d *Deck) SetJogPitchSensitivity(g float64) {
+	if g <= 0 {
+		g = defaultJogPitchSensitivity
+	}
+	d.storeFloat(&d.jogPitchGainBits, g)
+}
+
+// AddJogScratchDelta accumulates a scratch velocity contribution from one
+// MIDI encoder tick. Uses a CAS loop so concurrent ticks (e.g. fast platter
+// movement firing several events between Stream() calls) compose additively
+// without locking.
+func (d *Deck) AddJogScratchDelta(delta float64) {
+	contrib := delta * d.loadFloat(&d.jogScratchGainBits)
+	for {
+		old := d.jogScratchVel.Load()
+		newV := math.Float64frombits(old) + contrib
+		if d.jogScratchVel.CompareAndSwap(old, math.Float64bits(newV)) {
+			return
+		}
+	}
+}
+
+// AddJogPitchDelta accumulates a pitch-bend tempo offset from one MIDI
+// encoder tick. Same CAS pattern as AddJogScratchDelta.
+func (d *Deck) AddJogPitchDelta(delta float64) {
+	contrib := delta * d.loadFloat(&d.jogPitchGainBits)
+	for {
+		old := d.jogPitchOffset.Load()
+		newV := math.Float64frombits(old) + contrib
+		if d.jogPitchOffset.CompareAndSwap(old, math.Float64bits(newV)) {
+			return
+		}
+	}
+}
+
 // SamplesPerBeat returns the number of samples in one beat at the track's
 // native (non-tempo-adjusted) BPM. Using the native BPM keeps halve/double
 // musically meaningful when the user later changes tempo.
@@ -561,20 +686,37 @@ func (d *Deck) Stream(samples [][2]float32) {
 
 	// ── Audio processing ──
 
-	// If not playing and fade is silent, zero-fill
-	if !d.playing.Load() && d.fade.State() == FadeSilent {
+	// Snapshot jog state. While scratching (vinyl mode + top touch), the
+	// platter velocity replaces the tempo and the deck must run even if
+	// !playing — SetJogTouch() forces playing=true on touch-down for this.
+	vinylMode := d.vinylMode.Load()
+	touched := d.jogTouched.Load()
+	scratching := vinylMode && touched
+	scratchVel := d.loadFloat(&d.jogScratchVel)
+	pitchOff := d.loadFloat(&d.jogPitchOffset)
+
+	// Early-return when not playing AND not scratching. Skipping the early
+	// return while scratching keeps audio flowing during a scratch from a
+	// paused deck.
+	if !scratching && !d.playing.Load() && d.fade.State() == FadeSilent {
 		for i := range samples {
 			samples[i] = [2]float32{}
 		}
 		return
 	}
 
-	tempo := d.loadFloat(&d.tempoBits)
+	var tempo float64
+	if scratching {
+		tempo = scratchVel
+	} else {
+		tempo = d.loadFloat(&d.tempoBits) + pitchOff
+	}
 	n := len(samples)
 
 	// Snapshot loop bounds once per call — cheap atomic loads, used from the
-	// hot inner loops below without re-checking every sample.
-	loopActive := d.loopActive.Load()
+	// hot inner loops below without re-checking every sample. Loops are
+	// suppressed while scratching: the user is manually positioning the platter.
+	loopActive := d.loopActive.Load() && !scratching
 	var loopStartSamples, loopEndSamples float64
 	if loopActive {
 		ls := d.loadFloat(&d.loopStart)
@@ -642,9 +784,11 @@ func (d *Deck) Stream(samples [][2]float32) {
 			i += count
 		}
 	} else {
-		// Tempo path: linear interpolation with float64 accumulator. The loop
-		// wrap is checked once per output sample, which is trivial compared
-		// to the interpolation itself.
+		// Tempo path: linear interpolation with float64 accumulator. Handles
+		// both forward (tempo > 0, including pitch bend) and reverse (tempo
+		// < 0, only reachable while scratching). The loop wrap is checked
+		// once per output sample, which is trivial compared to the
+		// interpolation itself.
 		for i := 0; i < n; i++ {
 			if loopActive && d.fpos >= loopEndSamples {
 				d.fpos = loopStartSamples + (d.fpos - loopEndSamples)
@@ -652,19 +796,28 @@ func (d *Deck) Stream(samples [][2]float32) {
 					d.fpos = loopStartSamples
 				}
 			}
-			idx := int(d.fpos)
-			if idx >= p.len-1 {
+			idx := int(math.Floor(d.fpos))
+			if idx < 0 || idx >= p.len-1 {
 				samples[i] = [2]float32{}
-				continue
+			} else {
+				frac := float32(d.fpos - float64(idx))
+				samples[i][0] = p.samples[idx][0]*(1-frac) + p.samples[idx+1][0]*frac
+				samples[i][1] = p.samples[idx][1]*(1-frac) + p.samples[idx+1][1]*frac
 			}
-			frac := float32(d.fpos - float64(idx))
-			samples[i][0] = p.samples[idx][0]*(1-frac) + p.samples[idx+1][0]*frac
-			samples[i][1] = p.samples[idx][1]*(1-frac) + p.samples[idx+1][1]*frac
 			d.fpos += tempo
+			if d.fpos < 0 {
+				d.fpos = 0
+			}
 		}
 	}
-	d.pos = int(d.fpos)
-	if !loopActive && (eotReached || d.pos >= p.len) {
+	if d.fpos < 0 {
+		d.pos = 0
+	} else {
+		d.pos = int(d.fpos)
+	}
+	// Only flip playing→false on EoT when not scratching, so scratching
+	// off the end of the track doesn't kill the deck.
+	if !scratching && !loopActive && (eotReached || d.pos >= p.len) {
 		d.playing.Store(false)
 		d.fade = NewFadeEnvelope(d.sampleRate, 0.01)
 	}
@@ -694,6 +847,30 @@ func (d *Deck) Stream(samples [][2]float32) {
 	// Update position snapshot for UI (atomic, read by Position())
 	if p.len > 0 {
 		d.storeFloat(&d.posSnapshot, float64(d.pos)/float64(p.len))
+	}
+
+	// Decay jog velocities. Halflife → per-block factor. CAS so concurrent
+	// AddJog* calls between snapshot and store don't get clobbered.
+	blockSecsMs := 1000.0 * float64(n) / float64(d.sampleRate)
+	if scratching && scratchVel != 0 {
+		factor := math.Pow(0.5, blockSecsMs/jogScratchHalflifeMs)
+		for {
+			oldBits := d.jogScratchVel.Load()
+			newV := math.Float64frombits(oldBits) * factor
+			if d.jogScratchVel.CompareAndSwap(oldBits, math.Float64bits(newV)) {
+				break
+			}
+		}
+	}
+	if pitchOff != 0 {
+		factor := math.Pow(0.5, blockSecsMs/jogPitchHalflifeMs)
+		for {
+			oldBits := d.jogPitchOffset.Load()
+			newV := math.Float64frombits(oldBits) * factor
+			if d.jogPitchOffset.CompareAndSwap(oldBits, math.Float64bits(newV)) {
+				break
+			}
+		}
 	}
 }
 

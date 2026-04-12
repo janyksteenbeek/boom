@@ -69,6 +69,16 @@ type Config struct {
 	BPMRange              string `yaml:"bpm_range"` // "normal", "wide", or genre presets
 	AutoCue               bool   `yaml:"auto_cue"`  // Seek to first audio frame on track load (fallback cue)
 	Loop                  LoopSettings `yaml:"loop"`
+	Jog                   JogSettings  `yaml:"jog"`
+}
+
+// JogSettings holds per-app jog wheel preferences. Sensitivities are unitless
+// gains applied to each MIDI encoder tick. Defaults are tuned for the
+// Pioneer DDJ-FLX4; other controllers may want different values.
+type JogSettings struct {
+	VinylMode          bool    `yaml:"vinyl_mode"`          // top touch enables scratching when true
+	ScratchSensitivity float64 `yaml:"scratch_sensitivity"` // default ~0.4 (vinyl scratch feel)
+	PitchSensitivity   float64 `yaml:"pitch_sensitivity"`   // default ~0.04 (pitch bend nudge)
 }
 
 // LoopSettings holds per-app loop preferences. Mirrors Rekordbox's Loop options:
@@ -166,6 +176,24 @@ func (c *Config) Validate() bool {
 	if c.Loop.MaxBeats <= 0 {
 		c.Loop.MaxBeats = defaults.Loop.MaxBeats
 		changed = true
+	}
+	// Detect a fresh / pre-jog-block config: both sensitivities zero means
+	// the user has never persisted a jog block. Apply *all* jog defaults
+	// including VinylMode in that case so we don't silently ship vinyl mode
+	// off (the bool zero value) for existing installs.
+	jogFresh := c.Jog.ScratchSensitivity == 0 && c.Jog.PitchSensitivity == 0
+	if jogFresh {
+		c.Jog = defaults.Jog
+		changed = true
+	} else {
+		if c.Jog.ScratchSensitivity <= 0 {
+			c.Jog.ScratchSensitivity = defaults.Jog.ScratchSensitivity
+			changed = true
+		}
+		if c.Jog.PitchSensitivity <= 0 {
+			c.Jog.PitchSensitivity = defaults.Jog.PitchSensitivity
+			changed = true
+		}
 	}
 
 	// Normalize the "DEFAULT" sentinel to an empty string so downstream code

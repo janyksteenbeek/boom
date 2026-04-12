@@ -150,6 +150,39 @@ func ShowSettingsDialog(window fyne.Window, cfg *config.Config, onSave func(*con
 		defaultBeatLoopSelect,
 	)
 
+	// --- Jog Wheel ---
+	vinylModeCheck := widget.NewCheck("Vinyl Mode (top touch enables scratching)", nil)
+	vinylModeCheck.SetChecked(cfg.Jog.VinylMode)
+
+	scratchSlider := widget.NewSlider(0.05, 1.5)
+	scratchSlider.Step = 0.05
+	scratchSlider.SetValue(cfg.Jog.ScratchSensitivity)
+	scratchValueLabel := widget.NewLabel(fmt.Sprintf("%.2f", cfg.Jog.ScratchSensitivity))
+	scratchSlider.OnChanged = func(v float64) {
+		scratchValueLabel.SetText(fmt.Sprintf("%.2f", v))
+	}
+
+	pitchSlider := widget.NewSlider(0.005, 0.2)
+	pitchSlider.Step = 0.005
+	pitchSlider.SetValue(cfg.Jog.PitchSensitivity)
+	pitchValueLabel := widget.NewLabel(fmt.Sprintf("%.3f", cfg.Jog.PitchSensitivity))
+	pitchSlider.OnChanged = func(v float64) {
+		pitchValueLabel.SetText(fmt.Sprintf("%.3f", v))
+	}
+
+	jogSection := container.NewVBox(
+		vinylModeCheck,
+		widget.NewLabel("When off, top-touch + rotate behaves as pitch bend (no scratching)."),
+		widget.NewSeparator(),
+		widget.NewLabel("Vinyl Scratch Sensitivity"),
+		container.NewBorder(nil, nil, nil, scratchValueLabel, scratchSlider),
+		widget.NewLabel("Higher = audio moves more per platter increment."),
+		widget.NewSeparator(),
+		widget.NewLabel("Pitch Bend Sensitivity"),
+		container.NewBorder(nil, nil, nil, pitchValueLabel, pitchSlider),
+		widget.NewLabel("Side-touch nudge depth on the jog wheel."),
+	)
+
 	analysisSection := container.NewVBox(
 		widget.NewLabel("Auto-analyze"),
 		autoAnalyzeOnLoad,
@@ -168,6 +201,7 @@ func ShowSettingsDialog(window fyne.Window, cfg *config.Config, onSave func(*con
 		container.NewTabItem("Audio", container.NewVBox(audioSection, layout.NewSpacer())),
 		container.NewTabItem("Analysis", container.NewVBox(analysisSection, layout.NewSpacer())),
 		container.NewTabItem("Loops", container.NewVBox(loopSection, layout.NewSpacer())),
+		container.NewTabItem("Jog", container.NewVBox(jogSection, layout.NewSpacer())),
 		container.NewTabItem("Performance", container.NewVBox(perfSection, layout.NewSpacer())),
 	)
 	tabs.SetTabLocation(container.TabLocationTop)
@@ -220,6 +254,11 @@ func ShowSettingsDialog(window fyne.Window, cfg *config.Config, onSave func(*con
 		if v, ok := beatLoopValues[defaultBeatLoopSelect.Selected]; ok {
 			cfg.Loop.DefaultBeatLoop = v
 		}
+
+		// Jog
+		cfg.Jog.VinylMode = vinylModeCheck.Checked
+		cfg.Jog.ScratchSensitivity = scratchSlider.Value
+		cfg.Jog.PitchSensitivity = pitchSlider.Value
 
 		// Save to disk
 		if err := cfg.Save(); err != nil {
