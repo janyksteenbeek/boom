@@ -156,6 +156,14 @@ func (d *Deck) applyPendingCommands(p *pcmBuffer, pTotal int) {
 	}
 	d.pos = newPos
 	d.fpos = float64(newPos)
+	// Mirror the seek into the UI-facing snapshot. While playing this gets
+	// overwritten at the end of Stream() anyway, but a paused deck would
+	// otherwise serve a stale Position() until the next play, which breaks
+	// repeated scrub-by-jog calls and the post-seek peek the engine does
+	// when relaying the new position to the bus.
+	if pTotal > 0 {
+		d.storeFloat(&d.posSnapshot, float64(newPos)/float64(pTotal))
+	}
 }
 
 // snapshotLoopBounds reads the loop atomics once per Stream() call and turns

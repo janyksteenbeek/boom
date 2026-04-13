@@ -48,6 +48,7 @@ func (e *Engine) handleDeckEvent(ev event.Event) error {
 		e.handleCueGoStart(deck, ev)
 	case event.ActionSeek:
 		deck.Seek(ev.Value)
+		e.publishPosition(deck, ev.Value)
 	case event.ActionVolumeChange:
 		deck.SetVolume(ev.Value)
 	case event.ActionGainChange:
@@ -88,6 +89,14 @@ func (e *Engine) handleDeckEvent(ev event.Event) error {
 	case event.ActionJogTouch:
 		deck.SetJogTouch(ev.Pressed)
 	case event.ActionJogScratch:
+		// While paused (and not actively scratching with the platter top
+		// touched), the jog wheel acts like a search/scrub: each tick
+		// nudges the playhead and the new position is broadcast so the
+		// UI follows along even though no audio is flowing.
+		if !deck.IsPlaying() && !deck.JogTouched() {
+			e.scrubDeckByJog(deck, ev.Value)
+			break
+		}
 		// Vinyl mode + top touch → scratch velocity. Otherwise (jog mode
 		// or side-only touch) the same encoder feeds the pitch bend.
 		if deck.VinylMode() && deck.JogTouched() {
@@ -96,11 +105,70 @@ func (e *Engine) handleDeckEvent(ev event.Event) error {
 			deck.AddJogPitchDelta(ev.Value)
 		}
 	case event.ActionJogPitch:
+		if !deck.IsPlaying() && !deck.JogTouched() {
+			e.scrubDeckByJog(deck, ev.Value)
+			break
+		}
 		deck.AddJogPitchDelta(ev.Value)
 	case event.ActionLoadTrack:
 		return e.handleLoadTrack(deck, ev)
 	}
 	return nil
+}
+
+// pausedScrubSecondsPerUnit converts one jog encoder delta unit into
+// seconds of playhead movement when scrubbing on a paused deck.
+//
+// The FLX4 platter is a fine-grained encoder (CC34 emits one delta per
+// MIDI tick, well over a thousand ticks per revolution). At 5 ms/tick a
+// full revolution scrubs roughly 8–10 seconds, which matches the "search"
+// feel of a CDJ when the platter is spun while paused.
+const pausedScrubSecondsPerUnit = 0.025
+
+// publishPosition broadcasts an explicit position update for a deck. Used
+// after seeks and paused scrubs where the regular position-update loop
+// (which only fires while playing) would otherwise leave the UI behind.
+func (e *Engine) publishPosition(deck *Deck, pos float64) {
+	if pos < 0 {
+		pos = 0
+	}
+	if pos > 1 {
+		pos = 1
+	}
+	e.bus.PublishAsync(event.Event{
+		Topic:  event.TopicEngine,
+		Action: event.ActionPositionUpdate,
+		DeckID: deck.ID(),
+		Value:  pos,
+	})
+}
+
+// scrubDeckByJog applies a relative seek scaled from a jog encoder delta
+// and republishes the new position so the waveform/beat-grid follow along.
+func (e *Engine) scrubDeckByJog(deck *Deck, delta float64) {
+	track := deck.Track()
+	if track == nil {
+		return
+	}
+	pcm := deck.pcm.Load()
+	if pcm == nil {
+		return
+	}
+	total := pcm.Total()
+	if total <= 0 {
+		return
+	}
+	deltaSamples := delta * pausedScrubSecondsPerUnit * float64(deck.SampleRate())
+	cur := deck.Position()
+	newPos := cur + deltaSamples/float64(total)
+	if newPos < 0 {
+		newPos = 0
+	}
+	if newPos > 1 {
+		newPos = 1
+	}
+	deck.Seek(newPos)
+	e.publishPosition(deck, newPos)
 }
 
 func (e *Engine) handlePlayPause(deck *Deck, ev event.Event) {
