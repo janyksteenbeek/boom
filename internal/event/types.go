@@ -13,6 +13,7 @@ const (
 	TopicEngine  Topic = "engine"
 	TopicUI       Topic = "ui"
 	TopicAnalysis Topic = "analysis"
+	TopicPlaylist Topic = "playlist"
 )
 
 // Deck actions.
@@ -87,6 +88,21 @@ const (
 	ActionFilterCategory = "filter_category"
 	ActionSortColumn     = "sort_column"
 )
+
+// Playlist actions.
+const (
+	ActionPlaylistTreeChanged   = "playlist_tree_changed"   // Payload: nil
+	ActionPlaylistTracksChanged = "playlist_tracks_changed" // Payload: playlistID string
+	ActionPlaylistInvalidated   = "playlist_invalidated"    // Payload: playlistID string
+	ActionPlaylistAddTracks     = "playlist_add_tracks"     // Payload: *AddTracksCmd
+	ActionPlaylistSelect        = "playlist_select"         // Payload: playlistID string
+)
+
+// AddTracksCmd is the payload for ActionPlaylistAddTracks.
+type AddTracksCmd struct {
+	PlaylistID string
+	TrackIDs   []string
+}
 
 // Analysis actions.
 const (

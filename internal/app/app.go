@@ -22,8 +22,9 @@ type App struct {
 	cfg      *config.Config
 	engine   *audio.Engine
 	midi     *boomidi.Manager
-	library  *library.Library
-	store    *library.Store
+	library   *library.Library
+	store     *library.Store
+	playlists *library.PlaylistService
 	analyzer *analysis.Service
 	plugins  *plugin.Registry
 	window   *ui.Window
@@ -46,6 +47,7 @@ func New() (*App, error) {
 		return nil, err
 	}
 	lib := library.NewLibrary(bus, store)
+	playlists := library.NewPlaylistService(store, bus)
 	analyzer := analysis.NewService(bus, store, cfg)
 
 	engine, err := audio.NewEngine(bus, cfg.SampleRate, cfg.BufferSize,
@@ -64,7 +66,7 @@ func New() (*App, error) {
 		log.Printf("controller setup: %v", err)
 	}
 
-	window := ui.NewWindow(bus, cfg)
+	window := ui.NewWindow(bus, cfg, playlists)
 
 	// Wire library search results to browser
 	bus.Subscribe(event.TopicLibrary, func(ev event.Event) error {
@@ -82,8 +84,9 @@ func New() (*App, error) {
 		cfg:      cfg,
 		engine:   engine,
 		midi:     midiMgr,
-		library:  lib,
-		store:    store,
+		library:   lib,
+		store:     store,
+		playlists: playlists,
 		analyzer: analyzer,
 		plugins:  plugins,
 		window:   window,

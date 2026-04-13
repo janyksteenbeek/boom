@@ -3,6 +3,7 @@ package browser
 import (
 	"image/color"
 	"log"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -10,6 +11,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/janyksteenbeek/boom/internal/event"
+	"github.com/janyksteenbeek/boom/internal/library"
 	boomtheme "github.com/janyksteenbeek/boom/internal/ui/theme"
 	"github.com/janyksteenbeek/boom/pkg/model"
 )
@@ -53,6 +55,7 @@ type BrowserView struct {
 	widget.BaseWidget
 
 	bus               *event.Bus
+	playlists         *library.PlaylistService
 	sidebar           *Sidebar
 	toolbar           *BrowserToolbar
 	columnHeader      *ColumnHeader
@@ -62,32 +65,41 @@ type BrowserView struct {
 	focus             browseFocus
 	sidebarFocusBar   *canvas.Rectangle
 	trackListFocusBar *canvas.Rectangle
+
+	// currentPlaylistID tracks the currently opened manual playlist (if any),
+	// used to scope reorder / delete / DnD operations and to decide whether a
+	// TopicPlaylist tracks-changed event should trigger a refetch.
+	currentPlaylistID string
 }
 
-func NewBrowserView(bus *event.Bus) *BrowserView {
-	b := &BrowserView{bus: bus, targetDeck: 1}
+func NewBrowserView(bus *event.Bus, playlists *library.PlaylistService) *BrowserView {
+	b := &BrowserView{bus: bus, playlists: playlists, targetDeck: 1}
 
-	// Sidebar
 	b.sidebar = NewSidebar(func(categoryID string) {
-		bus.PublishAsync(event.Event{
-			Topic: event.TopicLibrary, Action: event.ActionFilterCategory, Payload: categoryID,
-		})
+		b.onCategorySelected(categoryID)
 	})
+	b.sidebar.SetOnNodeAction(b.onSidebarNodeAction)
 
-	// Track list
 	b.trackList = NewTrackList(func(track model.Track) {
 		bus.Publish(event.Event{
 			Topic: event.TopicDeck, Action: event.ActionLoadTrack, DeckID: b.targetDeck, Payload: &track,
 		})
 	})
+	b.trackList.SetOnContext(func(_ int, at fyne.Position) { b.showTrackContextMenu(at) })
+	b.trackList.SetOnReorder(func(ids []string, newIndex int) {
+		if b.currentPlaylistID == "" || b.playlists == nil {
+			return
+		}
+		if err := b.playlists.ReorderMany(b.currentPlaylistID, ids, newIndex); err != nil {
+			log.Printf("reorder: %v", err)
+		}
+	})
 
-	// Column header with sort
 	b.columnHeader = NewColumnHeader(defaultColumns, func(colID string, ascending bool) {
 		b.trackList.Sort(colID, ascending)
 		b.columnHeader.SetSort(colID, ascending)
 	})
 
-	// Toolbar
 	b.toolbar = NewBrowserToolbar(bus, func(deck int) {
 		b.targetDeck = deck
 	}, func() []model.Track {
@@ -104,7 +116,6 @@ func NewBrowserView(bus *event.Bus) *BrowserView {
 	b.trackListFocusBar = canvas.NewRectangle(color.Transparent)
 	b.trackListFocusBar.SetMinSize(fyne.NewSize(2, 0))
 
-	// Right panel: toolbar + column header + track list, with focus bar on left
 	rightInner := container.NewBorder(
 		container.NewVBox(b.toolbar, b.columnHeader),
 		nil, nil, nil,
@@ -112,8 +123,6 @@ func NewBrowserView(bus *event.Bus) *BrowserView {
 	)
 	rightPanel := container.NewBorder(nil, nil, b.trackListFocusBar, nil, rightInner)
 
-	// Main layout: focus bar | sidebar | separator | right panel
-	// Border layout uses sidebar's MinSize (180px) for the left width
 	sidebarWrap := container.NewBorder(nil, nil, b.sidebarFocusBar, sidebarSep, b.sidebar)
 	b.content = container.NewBorder(
 		nil, nil,
@@ -124,6 +133,7 @@ func NewBrowserView(bus *event.Bus) *BrowserView {
 
 	b.applyFocus()
 	b.subscribeEvents()
+	b.refreshPlaylistTree()
 	b.ExtendBaseWidget(b)
 	return b
 }
@@ -149,6 +159,21 @@ func (b *BrowserView) subscribeEvents() {
 			result, ok := ev.Payload.(*event.AnalysisResult)
 			if ok {
 				b.trackList.UpdateTrackAnalysis(result.TrackID, result.BPM, result.Key)
+			}
+		}
+		return nil
+	})
+
+	// Playlist mutations: refresh sidebar tree and, if the currently open
+	// playlist changed, refetch its tracks.
+	b.bus.Subscribe(event.TopicPlaylist, func(ev event.Event) error {
+		switch ev.Action {
+		case event.ActionPlaylistTreeChanged:
+			b.refreshPlaylistTree()
+		case event.ActionPlaylistTracksChanged, event.ActionPlaylistInvalidated:
+			id, _ := ev.Payload.(string)
+			if id != "" && id == b.currentPlaylistID {
+				b.openPlaylist(id)
 			}
 		}
 		return nil
@@ -198,6 +223,10 @@ func (b *BrowserView) subscribeEvents() {
 	})
 }
 
+// TrackList exposes the inner track list so the window can wire
+// browser-scoped keyboard shortcuts against it.
+func (b *BrowserView) TrackList() *TrackList { return b.trackList }
+
 func (b *BrowserView) SetTracks(tracks []model.Track) {
 	b.trackList.SetTracks(tracks)
 	b.toolbar.UpdateTrackCount(len(tracks))
@@ -206,6 +235,56 @@ func (b *BrowserView) SetTracks(tracks []model.Track) {
 // SetGenres updates the sidebar with available genres.
 func (b *BrowserView) SetGenres(genres []string) {
 	b.sidebar.SetGenres(genres)
+}
+
+// onCategorySelected routes sidebar selection changes. Playlist categories
+// ("playlist:<id>") are handled locally via the PlaylistService so the
+// trackList gets the manual order as stored; everything else goes through
+// the existing library bus filter.
+func (b *BrowserView) onCategorySelected(categoryID string) {
+	if strings.HasPrefix(categoryID, "playlist:") {
+		id := strings.TrimPrefix(categoryID, "playlist:")
+		b.openPlaylist(id)
+		return
+	}
+	b.currentPlaylistID = ""
+	b.trackList.SetReorderable(false)
+	b.bus.PublishAsync(event.Event{
+		Topic: event.TopicLibrary, Action: event.ActionFilterCategory, Payload: categoryID,
+	})
+}
+
+func (b *BrowserView) openPlaylist(id string) {
+	if b.playlists == nil {
+		return
+	}
+	node, err := b.playlists.Node(id)
+	if err != nil || node == nil {
+		return
+	}
+	tracks, err := b.playlists.Tracks(id)
+	if err != nil {
+		log.Printf("playlist tracks: %v", err)
+		return
+	}
+	b.currentPlaylistID = id
+	b.trackList.SetReorderable(node.Kind == model.KindManual)
+	b.trackList.SetPlaylistID(id)
+	b.SetTracks(tracks)
+}
+
+// refreshPlaylistTree fetches the full tree from the service and pushes it
+// into the sidebar. Safe to call on any goroutine.
+func (b *BrowserView) refreshPlaylistTree() {
+	if b.playlists == nil {
+		return
+	}
+	tree, err := b.playlists.Tree()
+	if err != nil {
+		log.Printf("playlist tree: %v", err)
+		return
+	}
+	b.sidebar.SetPlaylistTree(tree)
 }
 
 func (b *BrowserView) CreateRenderer() fyne.WidgetRenderer {

@@ -5,6 +5,7 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -12,6 +13,7 @@ import (
 	"github.com/janyksteenbeek/boom/internal/audio"
 	"github.com/janyksteenbeek/boom/internal/config"
 	"github.com/janyksteenbeek/boom/internal/event"
+	"github.com/janyksteenbeek/boom/internal/library"
 	"github.com/janyksteenbeek/boom/internal/ui/assets"
 	"github.com/janyksteenbeek/boom/internal/ui/beatgrid"
 	"github.com/janyksteenbeek/boom/internal/ui/browser"
@@ -37,7 +39,7 @@ type Window struct {
 	onSettingsSave func(*config.Config)
 }
 
-func NewWindow(bus *event.Bus, cfg *config.Config) *Window {
+func NewWindow(bus *event.Bus, cfg *config.Config, playlists *library.PlaylistService) *Window {
 	a := app.NewWithID("dev.janyk.boom")
 	a.SetIcon(fyne.NewStaticResource("app-icon.png", assets.AppIconPNG))
 	a.Settings().SetTheme(boomtheme.New())
@@ -54,7 +56,7 @@ func NewWindow(bus *event.Bus, cfg *config.Config) *Window {
 		deck2:    deck.NewDeckView(2, bus),
 		mixer:    mixer.NewMixerView(bus),
 		fxBar:    fxbar.NewFXBarView(bus),
-		browser:  browser.NewBrowserView(bus),
+		browser:  browser.NewBrowserView(bus, playlists),
 		beatGrid: beatgrid.NewBeatGridStrip(bus),
 	}
 
@@ -119,7 +121,87 @@ func NewWindow(bus *event.Bus, cfg *config.Config) *Window {
 
 	w.SetContent(fullLayout)
 	win.subscribeEvents()
+	win.installShortcuts(playlists)
 	return win
+}
+
+// installShortcuts wires the browser-scoped keyboard shortcuts for playlist
+// management. Shortcuts are only acted on when the user is focussed on the
+// browser track list with a manual playlist open, so they never interfere
+// with deck controls.
+func (w *Window) installShortcuts(playlists *library.PlaylistService) {
+	if playlists == nil {
+		return
+	}
+	tl := w.browser.TrackList()
+
+	reorderBy := func(step int) {
+		pid := tl.PlaylistID()
+		if pid == "" {
+			return
+		}
+		sel := tl.SelectedTracks()
+		if len(sel) == 0 {
+			return
+		}
+		// Move the primary selection; multi-move is cheap because
+		// ReorderMany is already a single transaction.
+		ids := make([]string, len(sel))
+		for i, t := range sel {
+			ids[i] = t.ID
+		}
+		tracks := tl.Tracks()
+		firstIdx := -1
+		for i, t := range tracks {
+			for _, s := range sel {
+				if t.ID == s.ID {
+					firstIdx = i
+					break
+				}
+			}
+			if firstIdx >= 0 {
+				break
+			}
+		}
+		if firstIdx < 0 {
+			return
+		}
+		newIdx := firstIdx + step
+		if newIdx < 0 {
+			newIdx = 0
+		}
+		_ = playlists.ReorderMany(pid, ids, newIdx)
+	}
+
+	remove := func() {
+		pid := tl.PlaylistID()
+		if pid == "" {
+			return
+		}
+		sel := tl.SelectedTracks()
+		if len(sel) == 0 {
+			return
+		}
+		ids := make([]string, len(sel))
+		for i, t := range sel {
+			ids[i] = t.ID
+		}
+		_ = playlists.RemoveTracks(pid, ids)
+	}
+
+	canvas := w.window.Canvas()
+	canvas.SetOnTypedKey(func(ev *fyne.KeyEvent) {
+		switch ev.Name {
+		case fyne.KeyDelete, fyne.KeyBackspace:
+			remove()
+		}
+	})
+	canvas.AddShortcut(&desktop.CustomShortcut{KeyName: fyne.KeyUp, Modifier: fyne.KeyModifierShortcutDefault}, func(fyne.Shortcut) {
+		reorderBy(-1)
+	})
+	canvas.AddShortcut(&desktop.CustomShortcut{KeyName: fyne.KeyDown, Modifier: fyne.KeyModifierShortcutDefault}, func(fyne.Shortcut) {
+		reorderBy(1)
+	})
 }
 
 // OnSettingsSave sets a callback for when settings are saved.

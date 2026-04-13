@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -62,7 +63,17 @@ func NewStore(dbPath string, mmapBytes int64) (*Store, error) {
 		return nil, fmt.Errorf("create db dir: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	// Append the foreign_keys pragma to the DSN so every connection in the
+	// pool has it enabled — the `PRAGMA foreign_keys=ON` below only affects
+	// the single connection it runs on, which is not enough for cascade
+	// deletes that happen on queries issued from other pool connections.
+	dsn := dbPath
+	if !strings.Contains(dsn, "?") {
+		dsn += "?_pragma=foreign_keys(1)"
+	} else {
+		dsn += "&_pragma=foreign_keys(1)"
+	}
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
@@ -211,6 +222,58 @@ func (s *Store) migrate() error {
 	`); err != nil {
 		return fmt.Errorf("migrate v5 waveform: %w", err)
 	}
+
+	// v6: playlist tree + membership + rule tables. Rules are normalized
+	// into their own table so everything is queryable (e.g. the analysis
+	// invalidation path can ask "which auto playlists reference bpm?"
+	// with a single SELECT) and values are stored in typed columns rather
+	// than serialized JSON.
+	if _, err := s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS playlist_nodes (
+			id           TEXT PRIMARY KEY,
+			parent_id    TEXT,
+			kind         TEXT NOT NULL,
+			name         TEXT NOT NULL,
+			position     INTEGER NOT NULL DEFAULT 0,
+			match        TEXT NOT NULL DEFAULT 'all',
+			external_id  TEXT NOT NULL DEFAULT '',
+			source       TEXT NOT NULL DEFAULT 'local',
+			created_at   TEXT NOT NULL,
+			updated_at   TEXT NOT NULL,
+			FOREIGN KEY(parent_id) REFERENCES playlist_nodes(id) ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS idx_playlist_nodes_parent ON playlist_nodes(parent_id, position);
+		CREATE TABLE IF NOT EXISTS playlist_tracks (
+			playlist_id TEXT NOT NULL,
+			track_id    TEXT NOT NULL,
+			position    INTEGER NOT NULL,
+			added_at    TEXT NOT NULL,
+			PRIMARY KEY (playlist_id, track_id),
+			FOREIGN KEY(playlist_id) REFERENCES playlist_nodes(id) ON DELETE CASCADE,
+			FOREIGN KEY(track_id)    REFERENCES tracks(id)         ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS idx_playlist_tracks_order ON playlist_tracks(playlist_id, position);
+		CREATE TABLE IF NOT EXISTS playlist_rules (
+			playlist_id TEXT    NOT NULL,
+			position    INTEGER NOT NULL,
+			field       TEXT    NOT NULL,
+			op          TEXT    NOT NULL,
+			value_text  TEXT    NOT NULL DEFAULT '',
+			value_num   REAL    NOT NULL DEFAULT 0,
+			value_num2  REAL    NOT NULL DEFAULT 0,
+			PRIMARY KEY (playlist_id, position),
+			FOREIGN KEY (playlist_id) REFERENCES playlist_nodes(id) ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS idx_playlist_rules_field ON playlist_rules(field);
+	`); err != nil {
+		return fmt.Errorf("migrate v6 playlists: %w", err)
+	}
+	// Idempotent: earlier revisions of v6 shipped with a JSON `rules`
+	// column on playlist_nodes instead of the separate playlist_rules
+	// table. The ADD COLUMN here brings those dev DBs forward; the old
+	// `rules` column is left in place because SQLite ALTER cannot drop
+	// columns and it is harmless dead weight.
+	s.db.Exec(`ALTER TABLE playlist_nodes ADD COLUMN match TEXT NOT NULL DEFAULT 'all'`)
 
 	// One-shot backfill: copy any existing analysis rows from the legacy
 	// columns into track_analysis. Only runs when track_analysis is empty,
