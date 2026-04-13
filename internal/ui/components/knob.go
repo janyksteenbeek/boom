@@ -84,7 +84,10 @@ func (k *Knob) CreateRenderer() fyne.WidgetRenderer {
 	return r
 }
 
-const arcSegs = 36
+// arcSegs controls how many line segments make up the knob's background track
+// and value arc. The visible arc spans ~270°, so at 96 segments each slice is
+// ~2.8°, which is well below what the eye catches as polygonal on a 54px knob.
+const arcSegs = 96
 
 type knobRenderer struct {
 	knob *Knob
@@ -105,11 +108,11 @@ func (r *knobRenderer) build() {
 
 	for i := range r.tracks {
 		r.tracks[i] = canvas.NewLine(color.RGBA{R: 50, G: 50, B: 55, A: 255})
-		r.tracks[i].StrokeWidth = 3
+		r.tracks[i].StrokeWidth = 3.5
 	}
 	for i := range r.arcs {
 		r.arcs[i] = canvas.NewLine(boomtheme.ColorBlue)
-		r.arcs[i].StrokeWidth = 3
+		r.arcs[i].StrokeWidth = 3.5
 		r.arcs[i].Hidden = true
 	}
 

@@ -314,7 +314,7 @@ func (s *Store) prepare() error {
 		return fmt.Errorf("prepare get by path: %w", err)
 	}
 
-	s.stmtMtimeByPath, err = s.db.Prepare(`SELECT file_mtime FROM tracks WHERE path = ?`)
+	s.stmtMtimeByPath, err = s.db.Prepare(`SELECT file_mtime, duration FROM tracks WHERE path = ?`)
 	if err != nil {
 		return fmt.Errorf("prepare mtime by path: %w", err)
 	}
@@ -373,15 +373,16 @@ func (s *Store) UpsertTrack(t *model.Track) error {
 	return nil
 }
 
-// MtimeByPath returns the stored file mtime for a path, or 0 if the track
-// is not in the database yet. Used by the scanner to skip unchanged files.
-func (s *Store) MtimeByPath(path string) (int64, error) {
-	var m int64
-	err := s.stmtMtimeByPath.QueryRow(path).Scan(&m)
+// MtimeByPath returns the stored file mtime and duration-in-ms for a path,
+// or zeros if the track is not in the database yet. Used by the scanner to
+// skip unchanged files; the duration is also returned so the scanner can
+// re-read metadata for legacy rows whose duration was never populated.
+func (s *Store) MtimeByPath(path string) (mtime int64, durationMs int64, err error) {
+	err = s.stmtMtimeByPath.QueryRow(path).Scan(&mtime, &durationMs)
 	if err == sql.ErrNoRows {
-		return 0, nil
+		return 0, 0, nil
 	}
-	return m, err
+	return mtime, durationMs, err
 }
 
 // MarkPlayed bumps the play counter for a track and sets last_played

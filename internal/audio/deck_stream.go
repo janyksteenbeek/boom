@@ -96,6 +96,8 @@ func (d *Deck) Stream(samples [][2]float32) {
 		d.playing.Store(false)
 	}
 
+	d.updatePeakLevel(samples)
+
 	// Update position snapshot for UI (atomic, read by Position()). Use
 	// the expected total so the playhead doesn't jump while more samples
 	// stream in.
@@ -258,6 +260,44 @@ func (d *Deck) fillTempoInterpolated(samples [][2]float32, p *pcmBuffer, pLen in
 			d.fpos = 0
 		}
 	}
+}
+
+// peakDecayPerBlock controls how fast the deck's peak meter falls between
+// audio blocks once the input quiets. ~0.95 gives a ~80 ms half-life at
+// 44.1 kHz / 256-sample blocks, which feels responsive without strobing.
+const peakDecayPerBlock = 0.95
+
+// updatePeakLevel scans the post-gain output buffer for the largest
+// absolute sample and folds it into the smoothed peakBits atomic the UI
+// and LED loops poll. Cheap (one pass, no allocs) and safe to leave on the
+// audio thread.
+func (d *Deck) updatePeakLevel(samples [][2]float32) {
+	var blockPeak float32
+	for i := range samples {
+		l := samples[i][0]
+		if l < 0 {
+			l = -l
+		}
+		r := samples[i][1]
+		if r < 0 {
+			r = -r
+		}
+		if l > blockPeak {
+			blockPeak = l
+		}
+		if r > blockPeak {
+			blockPeak = r
+		}
+	}
+	prev := math.Float64frombits(d.peakBits.Load())
+	next := float64(blockPeak)
+	if decayed := prev * peakDecayPerBlock; decayed > next {
+		next = decayed
+	}
+	if next > 1 {
+		next = 1
+	}
+	d.peakBits.Store(math.Float64bits(next))
 }
 
 // decayJogVelocities applies the per-block exponential decay to scratch

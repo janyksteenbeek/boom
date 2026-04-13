@@ -145,6 +145,12 @@ type Deck struct {
 	track    atomic.Pointer[model.Track]
 	waveform atomic.Pointer[WaveformData]
 
+	// peakBits is the latest envelope-followed output peak for this deck,
+	// 0..1 normalized, written by the audio thread in Stream() and read by
+	// the UI / LED feedback loops. Smoothed with a per-block exponential
+	// decay so meters don't strobe between blocks.
+	peakBits atomic.Uint64
+
 	// decodeDone is closed by the streaming decode goroutine once the full
 	// PCM buffer is available. A new channel is installed on every LoadTrack
 	// call. Stored as a pointer so callers snapshot the channel for *their*
@@ -188,6 +194,12 @@ func (d *Deck) ID() int                 { return d.id }
 func (d *Deck) SampleRate() int          { return d.sampleRate }
 func (d *Deck) Track() *model.Track     { return d.track.Load() }
 func (d *Deck) Waveform() *WaveformData { return d.waveform.Load() }
+
+// PeakLevel returns the latest envelope-followed output peak (0..1).
+// Written from the audio thread, safe to read from any goroutine.
+func (d *Deck) PeakLevel() float64 {
+	return math.Float64frombits(d.peakBits.Load())
+}
 
 // PCMSamples returns a read-only reference to the decoded PCM buffer.
 // The returned slice must not be modified. Returns nil if no track is loaded.

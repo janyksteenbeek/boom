@@ -30,7 +30,14 @@ type WaveformWidget struct {
 	loopEnd    float64
 	loopBeats  float64
 	loopActive bool
+
+	// onSeek is invoked (normalized 0..1) whenever the user clicks or drags
+	// the waveform to scrub the playhead. Nil = non-interactive.
+	onSeek func(float64)
 }
+
+var _ fyne.Tappable = (*WaveformWidget)(nil)
+var _ fyne.Draggable = (*WaveformWidget)(nil)
 
 func NewWaveformWidget(deckID int) *WaveformWidget {
 	w := &WaveformWidget{
@@ -41,6 +48,38 @@ func NewWaveformWidget(deckID int) *WaveformWidget {
 	}
 	w.ExtendBaseWidget(w)
 	return w
+}
+
+// SetOnSeek installs the callback fired when the user clicks or drags the
+// waveform to scrub. The callback receives a normalized position 0..1.
+func (w *WaveformWidget) SetOnSeek(fn func(float64)) {
+	w.onSeek = fn
+}
+
+func (w *WaveformWidget) Tapped(ev *fyne.PointEvent) {
+	if w.onSeek == nil {
+		return
+	}
+	w.onSeek(clampUnit(float64(ev.Position.X) / float64(w.Size().Width)))
+}
+
+func (w *WaveformWidget) Dragged(ev *fyne.DragEvent) {
+	if w.onSeek == nil {
+		return
+	}
+	w.onSeek(clampUnit(float64(ev.Position.X) / float64(w.Size().Width)))
+}
+
+func (w *WaveformWidget) DragEnd() {}
+
+func clampUnit(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
 }
 
 // SetLoopState updates the loop overlay. Pass start<0 (or end<=start) to hide.

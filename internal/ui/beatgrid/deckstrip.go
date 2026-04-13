@@ -33,7 +33,13 @@ type DeckStrip struct {
 
 	// Cue marker — normalized 0..1; <0 = unset.
 	cuePoint float64
+
+	// onSeek is invoked with a normalized 0..1 position whenever the user
+	// drags horizontally on the strip to scrub. Nil = non-interactive.
+	onSeek func(float64)
 }
+
+var _ fyne.Draggable = (*DeckStrip)(nil)
 
 func NewDeckStrip(deckID int) *DeckStrip {
 	d := &DeckStrip{
@@ -108,6 +114,45 @@ func (d *DeckStrip) SetDuration(dur time.Duration) {
 	d.duration = dur
 	d.mu.Unlock()
 }
+
+// SetOnSeek installs the callback fired while the user drags horizontally
+// on the strip to scrub. Receives a normalized 0..1 position.
+func (d *DeckStrip) SetOnSeek(fn func(float64)) {
+	d.onSeek = fn
+}
+
+// Dragged applies a relative jog based on the horizontal drag delta. The
+// scrolling strip is centered on the playhead, so dragging *right* is
+// analogous to pushing a vinyl platter right: the waveform scrolls right
+// (older content is revealed) and the playback position moves *backward*.
+func (d *DeckStrip) Dragged(ev *fyne.DragEvent) {
+	if d.onSeek == nil {
+		return
+	}
+	w := float64(d.Size().Width)
+	if w <= 0 {
+		return
+	}
+	d.mu.Lock()
+	if d.zoom <= 0 {
+		d.mu.Unlock()
+		return
+	}
+	delta := -float64(ev.Dragged.DX) / w * d.zoom
+	d.position += delta
+	if d.position < 0 {
+		d.position = 0
+	}
+	if d.position > 1 {
+		d.position = 1
+	}
+	newPos := d.position
+	d.mu.Unlock()
+	fyne.Do(func() { d.Refresh() })
+	d.onSeek(newPos)
+}
+
+func (d *DeckStrip) DragEnd() {}
 
 func (d *DeckStrip) MinSize() fyne.Size {
 	return fyne.NewSize(100, 56)

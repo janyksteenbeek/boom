@@ -45,6 +45,18 @@ func NewBeatGridStrip(bus *event.Bus) *BeatGridStrip {
 		strip2: NewDeckStrip(2),
 		zoom:   defaultZoom,
 	}
+	b.strip1.SetOnSeek(func(pos float64) {
+		bus.Publish(event.Event{
+			Topic: event.TopicDeck, Action: event.ActionSeek,
+			DeckID: 1, Value: pos,
+		})
+	})
+	b.strip2.SetOnSeek(func(pos float64) {
+		bus.Publish(event.Event{
+			Topic: event.TopicDeck, Action: event.ActionSeek,
+			DeckID: 2, Value: pos,
+		})
+	})
 
 	sep := canvas.NewRectangle(boomtheme.ColorSeparator)
 	sep.SetMinSize(fyne.NewSize(0, 0.5))

@@ -185,6 +185,8 @@ func (w *Window) subscribeEvents() {
 				d.UpdateLoopState(state)
 			}
 			w.beatGrid.SetLoopState(ev.DeckID, state)
+		case event.ActionVULevel:
+			w.mixer.UpdatePeakLevel(ev.DeckID, ev.Value)
 		}
 		return nil
 	})
@@ -231,6 +233,7 @@ func (w *Window) subscribeEvents() {
 			d.UpdateEQLow(ev.Value)
 		case event.ActionGainChange:
 			d.UpdateGain(ev.Value)
+			w.mixer.UpdateGain(ev.DeckID, ev.Value)
 		}
 		return nil
 	})

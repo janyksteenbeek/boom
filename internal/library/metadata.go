@@ -10,6 +10,7 @@ import (
 
 	"github.com/dhowden/tag"
 
+	"github.com/janyksteenbeek/boom/internal/audio"
 	"github.com/janyksteenbeek/boom/pkg/model"
 )
 
@@ -52,7 +53,28 @@ func ReadMetadata(path string) (*model.Track, error) {
 	t.Album = meta.Album()
 	t.Genre = meta.Genre()
 
+	if dur, ok := readDuration(path); ok {
+		t.Duration = dur
+	}
+
 	return t, nil
+}
+
+// readDuration opens the file with the audio decoder just long enough to
+// pull sample-rate + length from the header. beep's decoders return length
+// up-front for all formats we support (mp3/wav/flac), so this is cheap —
+// we immediately close the streamer.
+func readDuration(path string) (time.Duration, bool) {
+	streamer, format, err := audio.Decode(path)
+	if err != nil {
+		return 0, false
+	}
+	defer streamer.Close()
+	n := streamer.Len()
+	if n <= 0 {
+		return 0, false
+	}
+	return format.SampleRate.D(n), true
 }
 
 func generateID(path string) string {

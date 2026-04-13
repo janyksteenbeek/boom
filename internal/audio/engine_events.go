@@ -116,10 +116,15 @@ func (e *Engine) handlePlayPause(deck *Deck, ev event.Event) {
 		})
 		return
 	}
+	// Publish the *intended* post-toggle state. Pause() is async: it sets a
+	// fade-out flag and IsPlaying() stays true until the audio thread finishes
+	// the fade. Reading IsPlaying() here would report the old state and leave
+	// the UI stuck on "PAUSE".
+	wasPlaying := deck.IsPlaying()
 	deck.TogglePlay()
 	e.bus.PublishAsync(event.Event{
 		Topic: event.TopicEngine, Action: event.ActionPlayState,
-		DeckID: ev.DeckID, Value: boolToFloat(deck.IsPlaying()),
+		DeckID: ev.DeckID, Value: boolToFloat(!wasPlaying),
 	})
 }
 

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/janyksteenbeek/boom/internal/audio"
+	"github.com/janyksteenbeek/boom/internal/event"
 )
 
 // ledFeedbackLoop drives the per-deck PLAY and CUE LEDs with software blink:
@@ -110,12 +111,23 @@ func (a *App) ledFeedbackLoop() {
 	}
 }
 
-// vuMeterLoop sends VU meter levels to the controller at ~20 Hz. Hardware
-// expects CC 2 on ch0/ch1 with values in the 37-123 range.
+// vuMeterLoop polls each deck's smoothed output peak at ~20 Hz, publishes it
+// on the bus for UI meters to consume, and forwards the same level to the
+// controller as a CC value. The DDJ-FLX4 expects CC 2 on ch0/ch1 with
+// values in the 37–123 range; we use a perceptual sqrt curve so quiet
+// passages light a few segments instead of nothing.
+const (
+	vuMidiCC      uint8 = 2
+	vuMidiMin     uint8 = 37
+	vuMidiMax     uint8 = 123
+	vuMidiStatus  uint8 = 0xB0
+)
+
 func (a *App) vuMeterLoop() {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 
+	var lastMidi [2]uint8
 	for {
 		select {
 		case <-a.stopCh:
@@ -126,14 +138,29 @@ func (a *App) vuMeterLoop() {
 				if deck == nil {
 					continue
 				}
-				var vuValue uint8
-				if deck.IsPlaying() {
-					vuValue = 80 // Mid-level when playing (will be replaced with real RMS later)
-				} else {
-					vuValue = 37 // Minimum = off
+				peak := deck.PeakLevel()
+				// Perceptual curve — meters track loudness more than amplitude.
+				display := math.Sqrt(peak)
+				if display < 0 {
+					display = 0
 				}
-				channel := uint8(i) // ch0 for deck1, ch1 for deck2
-				_ = a.midi.SendMIDI(0xB0|channel, 2, vuValue)
+				if display > 1 {
+					display = 1
+				}
+
+				a.bus.PublishAsync(event.Event{
+					Topic:  event.TopicEngine,
+					Action: event.ActionVULevel,
+					DeckID: i + 1,
+					Value:  display,
+				})
+
+				vuValue := vuMidiMin + uint8(display*float64(vuMidiMax-vuMidiMin)+0.5)
+				if vuValue != lastMidi[i] {
+					lastMidi[i] = vuValue
+					channel := uint8(i)
+					_ = a.midi.SendMIDI(vuMidiStatus|channel, vuMidiCC, vuValue)
+				}
 			}
 		}
 	}

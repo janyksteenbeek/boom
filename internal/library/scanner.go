@@ -54,11 +54,13 @@ func (s *Scanner) ScanDir(dir string) (int, error) {
 
 		// Fast path: compare file mtime against what we already have.
 		// Tag reads hit disk (~ms each); skipping unchanged files makes
-		// rescans of large libraries near-instant.
+		// rescans of large libraries near-instant. Rows whose duration was
+		// never persisted (pre-duration scanner) are re-read so the TIME
+		// column backfills without needing a manual re-scan.
 		info, statErr := d.Info()
 		if statErr == nil {
-			existing, mErr := s.store.MtimeByPath(path)
-			if mErr == nil && existing != 0 && existing == info.ModTime().Unix() {
+			existing, durMs, mErr := s.store.MtimeByPath(path)
+			if mErr == nil && existing != 0 && existing == info.ModTime().Unix() && durMs > 0 {
 				count++
 				return nil
 			}
