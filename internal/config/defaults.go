@@ -41,6 +41,15 @@ func DefaultConfig() *Config {
 			ScratchSensitivity: 0.4,
 			PitchSensitivity:   0.04,
 		},
+		Library: LibrarySettings{
+			// 64 MB is a conservative sweet spot: it covers ~1.5k tracks
+			// with waveform cache comfortably (the hot path for the
+			// browser), leaves RSS headroom on a Raspberry Pi 2 GB board,
+			// and avoids the misleading RSS inflation that a 256 MB
+			// mmap causes on macOS. Users with bigger libraries on
+			// desktops can bump this via boom.yaml.
+			MMapSizeMB: 64,
+		},
 	}
 }
 

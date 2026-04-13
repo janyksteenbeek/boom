@@ -53,8 +53,11 @@ type Store struct {
 	stmtPutWaveform    *sql.Stmt
 }
 
-// NewStore opens or creates a SQLite database at the given path.
-func NewStore(dbPath string) (*Store, error) {
+// NewStore opens or creates a SQLite database at the given path. mmapBytes
+// caps how much of the DB SQLite may memory-map; pass 0 to fall back to the
+// built-in default (64 MB). Larger values speed up browser queries on big
+// libraries at the cost of higher reported RSS.
+func NewStore(dbPath string, mmapBytes int64) (*Store, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return nil, fmt.Errorf("create db dir: %w", err)
 	}
@@ -64,11 +67,15 @@ func NewStore(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 
+	if mmapBytes <= 0 {
+		mmapBytes = 64 * 1024 * 1024
+	}
+
 	pragmas := []string{
 		`PRAGMA journal_mode=WAL`,
 		`PRAGMA synchronous=NORMAL`,
 		`PRAGMA temp_store=MEMORY`,
-		`PRAGMA mmap_size=268435456`,
+		fmt.Sprintf(`PRAGMA mmap_size=%d`, mmapBytes),
 		`PRAGMA cache_size=-20000`,
 		`PRAGMA busy_timeout=5000`,
 		`PRAGMA foreign_keys=ON`,

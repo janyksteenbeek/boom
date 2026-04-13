@@ -41,7 +41,7 @@ func New() (*App, error) {
 	bus := event.New()
 	plugins := plugin.NewRegistry()
 
-	store, err := library.NewStore(cfg.DatabasePath)
+	store, err := library.NewStore(cfg.DatabasePath, int64(cfg.Library.MMapSizeMB)*1024*1024)
 	if err != nil {
 		return nil, err
 	}

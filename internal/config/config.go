@@ -68,8 +68,9 @@ type Config struct {
 	AutoAnalyzeOnImport   bool   `yaml:"auto_analyze_on_import"`
 	BPMRange              string `yaml:"bpm_range"` // "normal", "wide", or genre presets
 	AutoCue               bool   `yaml:"auto_cue"`  // Seek to first audio frame on track load (fallback cue)
-	Loop                  LoopSettings `yaml:"loop"`
-	Jog                   JogSettings  `yaml:"jog"`
+	Loop                  LoopSettings    `yaml:"loop"`
+	Jog                   JogSettings     `yaml:"jog"`
+	Library               LibrarySettings `yaml:"library"`
 
 	// loadedPath is the on-disk path this config was read from (or would be
 	// written to on Save). Not serialized — it's populated by LoadFrom.
@@ -87,6 +88,16 @@ type JogSettings struct {
 	VinylMode          bool    `yaml:"vinyl_mode"`          // top touch enables scratching when true
 	ScratchSensitivity float64 `yaml:"scratch_sensitivity"` // default ~0.4 (vinyl scratch feel)
 	PitchSensitivity   float64 `yaml:"pitch_sensitivity"`   // default ~0.04 (pitch bend nudge)
+}
+
+// LibrarySettings holds persistent-library preferences. MMapSizeMB caps the
+// amount of the SQLite database that may be memory-mapped. Larger values
+// speed up browser queries on big libraries at the cost of higher reported
+// RSS (the kernel counts mmap pages as resident). The default stays
+// conservative so Boom runs comfortably on Raspberry Pi 2 GB boards; users
+// with big libraries on desktops can raise it to 256 MB or beyond.
+type LibrarySettings struct {
+	MMapSizeMB int `yaml:"mmap_size_mb"`
 }
 
 // LoopSettings holds per-app loop preferences: quantize in/out points to the
@@ -188,6 +199,10 @@ func (c *Config) Validate() bool {
 	}
 	if c.Loop.MaxBeats <= 0 {
 		c.Loop.MaxBeats = defaults.Loop.MaxBeats
+		changed = true
+	}
+	if c.Library.MMapSizeMB <= 0 {
+		c.Library.MMapSizeMB = defaults.Library.MMapSizeMB
 		changed = true
 	}
 	// Detect a fresh / pre-jog-block config: both sensitivities zero means

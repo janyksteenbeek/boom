@@ -75,14 +75,29 @@ On first run Boom creates `configs/boom.yaml` with sensible defaults and an empt
 
 | Setting | Purpose |
 |---|---|
-| `sample_rate` / `buffer_size` | Audio engine clocking. Lower buffer = lower latency, higher CPU. |
-| `audio_output_device` | Main mix output. Empty = system default. |
-| `cue_output_device` | Optional headphone/cue output on a second device. Empty = disabled. |
+| `sample_rate` | Engine sample rate in Hz. Default `48000`. Tracks at other rates are resampled once on load. |
+| `buffer_size` | Frames per audio block. Default `512`. Lower = lower latency, higher CPU. |
+| `num_decks` | Number of decks to create. Default `2`. |
 | `music_dirs` | Folders scanned for tracks. |
-| `auto_cue` | Seek to first audible sample on load instead of sample 0. |
-| `bpm_range` | Octave-snap target for the BPM analyzer (e.g. Normal 78–180). |
-| `loop.*` | Beat-loop quantization, default beat length, min/max bounds, smart-loop. |
-| `jog.*` | Vinyl mode toggle and scratch/pitch sensitivities. |
+| `database_path` | SQLite library file location. Defaults to the OS user config dir. |
+| `midi_mapping_dir` | Folder watched for controller YAML mappings. |
+| `master_volume` | Initial master output gain (`0`–`1`). |
+| `headphone_volume` | Initial cue/headphone output gain (`0`–`1`). |
+| `audio_output_device` | Main mix output device ID. Empty = system default. |
+| `cue_output_device` | Optional headphone/cue output on a second device. Empty = disabled. |
+| `auto_analyze_on_deck_load` | Run BPM/key analysis when a track is loaded onto a deck. |
+| `auto_analyze_on_import` | Run BPM/key analysis for every track the scanner discovers. |
+| `bpm_range` | Octave-snap target for the BPM analyzer (e.g. `Normal (78–180)`). |
+| `auto_cue` | Seek to the first audible sample on load instead of sample 0. |
+| `loop.quantize` | Snap loop in/out points to the beat grid. |
+| `loop.default_beat_loop` | Default beat length for one-tap loops. |
+| `loop.min_beats` | Minimum beat length when halving (e.g. `0.03125` = 1/32). |
+| `loop.max_beats` | Maximum beat length when doubling. |
+| `loop.smart_loop` | Clamp loop bounds near track start/end instead of skipping. |
+| `jog.vinyl_mode` | Enable top-touch scratching; side-touch always pitch-bends. |
+| `jog.scratch_sensitivity` | Gain applied to scratch encoder ticks. |
+| `jog.pitch_sensitivity` | Gain applied to pitch-bend encoder ticks. |
+| `library.mmap_size_mb` | Cap on how much of the SQLite library may be memory-mapped. Defaults to `64`; raise to `256`+ on desktops with large libraries, lower to `16`–`32` on memory-constrained boards like Raspberry Pi 2 GB. Falls back to regular reads beyond the cap — never fails. |
 
 ## MIDI controllers
 
