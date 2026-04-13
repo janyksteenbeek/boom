@@ -290,8 +290,16 @@ func (d *DeckView) UpdatePosition(pos float64) {
 	if remaining < 0 {
 		remaining = 0
 	}
-	d.timeText.Text = formatDuration(current)
-	d.remainingText.Text = "-" + formatDuration(remaining)
+	// formatDuration is 1-Hz granular (M:SS). The position event fires at
+	// ~30 Hz, so most updates produce identical strings — skip the Refresh
+	// and the closure allocation when neither text changed.
+	newCurrent := formatDuration(current)
+	newRemaining := "-" + formatDuration(remaining)
+	if newCurrent == d.timeText.Text && newRemaining == d.remainingText.Text {
+		return
+	}
+	d.timeText.Text = newCurrent
+	d.remainingText.Text = newRemaining
 	fyne.Do(func() {
 		d.timeText.Refresh()
 		d.remainingText.Refresh()

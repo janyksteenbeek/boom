@@ -34,6 +34,11 @@ type DeckStrip struct {
 	// Cue marker — normalized 0..1; <0 = unset.
 	cuePoint float64
 
+	// layoutVersion is bumped by anything the raster draw() depends on
+	// except the playhead position. Lets the renderer skip full redraws
+	// when only the playhead moved a sub-pixel amount.
+	layoutVersion uint64
+
 	// onSeek is invoked with a normalized 0..1 position whenever the user
 	// drags horizontally on the strip to scrub. Nil = non-interactive.
 	onSeek func(float64)
@@ -61,6 +66,7 @@ func (d *DeckStrip) SetCuePoint(pos float64) {
 		return
 	}
 	d.cuePoint = pos
+	d.layoutVersion++
 	d.mu.Unlock()
 	fyne.Do(func() { d.Refresh() })
 }
@@ -75,6 +81,7 @@ func (d *DeckStrip) SetLoopState(start, end float64, active bool) {
 	d.loopStart = start
 	d.loopEnd = end
 	d.loopActive = active
+	d.layoutVersion++
 	d.mu.Unlock()
 	fyne.Do(func() { d.Refresh() })
 }
@@ -84,12 +91,17 @@ func (d *DeckStrip) SetFrequencyPeaks(low, mid, high []float64) {
 	d.peaksLow = low
 	d.peaksMid = mid
 	d.peaksHigh = high
+	d.layoutVersion++
 	d.mu.Unlock()
 	fyne.Do(func() { d.Refresh() })
 }
 
 func (d *DeckStrip) SetPosition(pos float64) {
 	d.mu.Lock()
+	if d.position == pos {
+		d.mu.Unlock()
+		return
+	}
 	d.position = pos
 	d.mu.Unlock()
 	fyne.Do(func() { d.Refresh() })
@@ -97,7 +109,12 @@ func (d *DeckStrip) SetPosition(pos float64) {
 
 func (d *DeckStrip) SetZoom(zoom float64) {
 	d.mu.Lock()
+	if d.zoom == zoom {
+		d.mu.Unlock()
+		return
+	}
 	d.zoom = zoom
+	d.layoutVersion++
 	d.mu.Unlock()
 	fyne.Do(func() { d.Refresh() })
 }
@@ -105,6 +122,7 @@ func (d *DeckStrip) SetZoom(zoom float64) {
 func (d *DeckStrip) SetBeatGrid(beats []float64) {
 	d.mu.Lock()
 	d.beatGrid = beats
+	d.layoutVersion++
 	d.mu.Unlock()
 	fyne.Do(func() { d.Refresh() })
 }

@@ -80,10 +80,15 @@ func (d *Deck) Stream(samples [][2]float32) {
 	// Apply Beat FX in-place (lock-free, zero-alloc)
 	d.beatFX.ProcessBuffer(samples, n)
 
-	// Apply gain and volume in a single pass (biquad filters are linear, so
-	// gain*EQ(x) == EQ(gain*x) — safe to combine post-EQ).
+	// Apply gain and volume in a single pass. Smoothers are ticked once per
+	// block via PrepareBlock — linear interp across the buffer instead of
+	// two atomic loads per sample. Biquad filters are linear, so
+	// gain*EQ(x) == EQ(gain*x) — safe to combine post-EQ.
+	gainStart, gainStep := d.gain.PrepareBlock(n)
+	volStart, volStep := d.volume.PrepareBlock(n)
 	for i := 0; i < n; i++ {
-		gv := d.gain.Tick() * d.volume.Tick()
+		fi := float32(i)
+		gv := (gainStart + gainStep*fi) * (volStart + volStep*fi)
 		samples[i][0] *= gv
 		samples[i][1] *= gv
 	}

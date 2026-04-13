@@ -60,31 +60,44 @@ func (f *BiquadFilter) ProcessBuffer(samples [][2]float32, n int) {
 	b0, b1, b2 := c.b0, c.b1, c.b2
 	a1, a2 := c.a1, c.a2
 
-	for ch := 0; ch < 2; ch++ {
-		x1, x2 := f.x1[ch], f.x2[ch]
-		y1, y2 := f.y1[ch], f.y2[ch]
+	// Single interleaved pass over both channels — keeps delay registers
+	// in local vars and halves the memory passes over samples[] compared
+	// to processing each channel in its own loop.
+	xL1, xL2 := f.x1[0], f.x2[0]
+	yL1, yL2 := f.y1[0], f.y2[0]
+	xR1, xR2 := f.x1[1], f.x2[1]
+	yR1, yR2 := f.y1[1], f.y2[1]
 
-		for i := 0; i < n; i++ {
-			x0 := float64(samples[i][ch])
-			y0 := b0*x0 + b1*x1 + b2*x2 - a1*y1 - a2*y2
-
-			// NaN guard: if filter output is NaN, reset state and output silence
-			if y0 != y0 {
-				x1, x2, y1, y2 = 0, 0, 0, 0
-				samples[i][ch] = 0
-				continue
-			}
-
-			x2 = x1
-			x1 = x0
-			y2 = y1
-			y1 = y0
-			samples[i][ch] = float32(y0)
+	for i := 0; i < n; i++ {
+		xL0 := float64(samples[i][0])
+		yL0 := b0*xL0 + b1*xL1 + b2*xL2 - a1*yL1 - a2*yL2
+		if yL0 != yL0 {
+			xL1, xL2, yL1, yL2 = 0, 0, 0, 0
+			yL0 = 0
 		}
+		xL2 = xL1
+		xL1 = xL0
+		yL2 = yL1
+		yL1 = yL0
+		samples[i][0] = float32(yL0)
 
-		f.x1[ch], f.x2[ch] = x1, x2
-		f.y1[ch], f.y2[ch] = y1, y2
+		xR0 := float64(samples[i][1])
+		yR0 := b0*xR0 + b1*xR1 + b2*xR2 - a1*yR1 - a2*yR2
+		if yR0 != yR0 {
+			xR1, xR2, yR1, yR2 = 0, 0, 0, 0
+			yR0 = 0
+		}
+		xR2 = xR1
+		xR1 = xR0
+		yR2 = yR1
+		yR1 = yR0
+		samples[i][1] = float32(yR0)
 	}
+
+	f.x1[0], f.x2[0] = xL1, xL2
+	f.y1[0], f.y2[0] = yL1, yL2
+	f.x1[1], f.x2[1] = xR1, xR2
+	f.y1[1], f.y2[1] = yR1, yR2
 }
 
 // Reset clears the filter delay state.

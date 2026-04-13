@@ -19,6 +19,16 @@ type deckStripRenderer struct {
 	raster  *canvas.Raster
 	img     *image.RGBA
 	size    fyne.Size
+
+	// Caches used to gate redundant raster redraws: if neither the layout
+	// (peaks/loop/cue/beats/zoom) nor the pixel position has changed since
+	// the last draw, skip the raster.Refresh() — which in turn avoids the
+	// alpha-blended draw() call on Fyne's render thread.
+	lastLayoutVersion uint64
+	lastDrawnPosition float64
+	lastSize          fyne.Size
+	lastHadPeaks      bool
+	layoutReady       bool
 }
 
 func (r *deckStripRenderer) buildObjects() {
@@ -55,15 +65,39 @@ func (r *deckStripRenderer) Refresh() {
 		return
 	}
 
-	r.bg.Resize(size)
-	r.bg.Move(fyne.NewPos(0, 0))
-
-	r.topLine.Position1 = fyne.NewPos(0, 0.5)
-	r.topLine.Position2 = fyne.NewPos(size.Width, 0.5)
-
 	r.widget.mu.RLock()
+	layoutVersion := r.widget.layoutVersion
+	position := r.widget.position
+	zoom := r.widget.zoom
 	hasPeaks := len(r.widget.peaksLow) > 0
 	r.widget.mu.RUnlock()
+
+	layoutChanged := !r.layoutReady ||
+		layoutVersion != r.lastLayoutVersion ||
+		size != r.lastSize ||
+		hasPeaks != r.lastHadPeaks
+
+	// Pixel-delta gate: the view window is `zoom` wide in normalized
+	// track units. One pixel of strip width corresponds to zoom/width
+	// normalized units, so a sub-pixel position delta can't possibly
+	// change the rendered image and we can skip the redraw entirely.
+	positionChanged := false
+	if hasPeaks && zoom > 0 && size.Width > 0 {
+		delta := position - r.lastDrawnPosition
+		if delta < 0 {
+			delta = -delta
+		}
+		positionChanged = delta*float64(size.Width)/zoom >= 1
+	}
+
+	if !layoutChanged && !positionChanged {
+		return
+	}
+
+	r.bg.Resize(size)
+	r.bg.Move(fyne.NewPos(0, 0))
+	r.topLine.Position1 = fyne.NewPos(0, 0.5)
+	r.topLine.Position2 = fyne.NewPos(size.Width, 0.5)
 
 	r.empty.Hidden = hasPeaks
 	r.raster.Hidden = !hasPeaks
@@ -78,9 +112,20 @@ func (r *deckStripRenderer) Refresh() {
 		r.empty.Resize(fyne.NewSize(size.Width, 12))
 	}
 
-	r.bg.Refresh()
-	r.topLine.Refresh()
-	r.empty.Refresh()
+	// Bg/topLine/empty only need to be re-marked on true layout changes
+	// (size or content changed). Skipping these on pixel-only scrolls
+	// avoids a driver round-trip per element per frame.
+	if layoutChanged {
+		r.bg.Refresh()
+		r.topLine.Refresh()
+		r.empty.Refresh()
+	}
+
+	r.lastLayoutVersion = layoutVersion
+	r.lastSize = size
+	r.lastHadPeaks = hasPeaks
+	r.lastDrawnPosition = position
+	r.layoutReady = true
 }
 
 func (r *deckStripRenderer) Objects() []fyne.CanvasObject {
