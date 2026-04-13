@@ -127,6 +127,15 @@ func (a *App) vuMeterLoop() {
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 
+	// silenceTicks counts consecutive ticks where both the raw peak and the
+	// perceptual display are effectively zero. After ~silenceGraceTicks
+	// (~1 s) the peak meter's envelope follower has fully decayed and the
+	// MIDI VU LED is already at minimum, so we can stop publishing events
+	// entirely until audio returns.
+	const silenceThreshold = 0.001
+	const silenceGraceTicks = 20
+	var silenceTicks [2]int
+
 	var lastMidi [2]uint8
 	for {
 		select {
@@ -146,6 +155,15 @@ func (a *App) vuMeterLoop() {
 				}
 				if display > 1 {
 					display = 1
+				}
+
+				if display < silenceThreshold {
+					silenceTicks[i]++
+					if silenceTicks[i] > silenceGraceTicks {
+						continue
+					}
+				} else {
+					silenceTicks[i] = 0
 				}
 
 				a.bus.PublishAsync(event.Event{

@@ -85,6 +85,9 @@ func (m *PeakMeter) SetLevel(v float64) {
 	m.lastUpdate = now
 	m.rawLevel = v
 
+	prevDisplay := m.displayLevel
+	prevHold := m.peakHold
+
 	// Envelope follower: rise fast, fall slow.
 	if v > m.displayLevel {
 		alpha := 1 - math.Exp(-dt/peakRiseTau)
@@ -107,9 +110,18 @@ func (m *PeakMeter) SetLevel(v float64) {
 			m.peakHold = 0
 		}
 	}
+
+	// Skip the repaint if neither displayed value moved enough to light
+	// a different segment. The meter has 24 segments (~0.042 per step)
+	// so 0.01 is well below one-segment resolution — safe to ignore.
+	const repaintEpsilon = 0.01
+	changed := math.Abs(m.displayLevel-prevDisplay) > repaintEpsilon ||
+		math.Abs(m.peakHold-prevHold) > repaintEpsilon
 	m.mu.Unlock()
 
-	fyne.Do(func() { m.Refresh() })
+	if changed {
+		fyne.Do(func() { m.Refresh() })
+	}
 }
 
 func (m *PeakMeter) MinSize() fyne.Size {

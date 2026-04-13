@@ -12,8 +12,12 @@ import (
 )
 
 const (
-	NumDecks               = 2
-	positionUpdateInterval = 16 * time.Millisecond
+	NumDecks = 2
+	// positionUpdateInterval drives how often the engine publishes
+	// ActionPositionUpdate. 33ms ≈ 30 Hz is visually smooth for a
+	// waveform that moves ~1-2 pixels per frame and halves all UI work
+	// hanging off this event.
+	positionUpdateInterval = 33 * time.Millisecond
 
 	// feederBlockFrames is the number of frames the engine generates per
 	// mixer tick. Small enough that the producer comfortably stays ahead

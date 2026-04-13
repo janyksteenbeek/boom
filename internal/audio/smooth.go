@@ -39,6 +39,40 @@ func (s *SmoothParam) Tick() float32 {
 	return s.current
 }
 
+// Advance simulates n consecutive Tick() calls in a single step and returns
+// the resulting smoothed value. Mathematically equivalent to Tick()×n but
+// without the per-sample loop or n atomic loads. Audio thread only.
+func (s *SmoothParam) Advance(n int) float32 {
+	if n <= 0 {
+		return s.current
+	}
+	t := math.Float32frombits(s.target.Load())
+	// c_n - c_0 = (1 - (1-k)^n) * (t - c_0)
+	eff := float32(1.0 - math.Pow(float64(1.0-s.coeff), float64(n)))
+	s.current += eff * (t - s.current)
+	return s.current
+}
+
+// PrepareBlock advances the smoother by n samples and returns (start, step)
+// for per-sample linear interpolation within the block:
+//
+//	v_i = start + step*float32(i)   for i in 0..n-1
+//
+// This matches the one-pole shape closely over short blocks (~10ms) while
+// eliminating the per-sample atomic load. Audio thread only.
+func (s *SmoothParam) PrepareBlock(n int) (start, step float32) {
+	if n <= 0 {
+		return s.current, 0
+	}
+	start = s.current
+	s.Advance(n)
+	if n <= 1 {
+		return start, 0
+	}
+	step = (s.current - start) / float32(n-1)
+	return start, step
+}
+
 // Snap instantly sets current to the target value, skipping smoothing.
 // Only call from the audio thread.
 func (s *SmoothParam) Snap() {

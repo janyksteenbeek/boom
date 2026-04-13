@@ -31,6 +31,13 @@ type WaveformWidget struct {
 	loopBeats  float64
 	loopActive bool
 
+	// layoutVersion is bumped whenever peaks, cue, or loop state changes —
+	// anything that requires the renderer to relayout canvas objects other
+	// than the playhead. Position updates do NOT bump this, so the renderer
+	// can cheaply detect "playhead only" refreshes and skip rebuilding 600+
+	// bar objects per frame.
+	layoutVersion uint64
+
 	// onSeek is invoked (normalized 0..1) whenever the user clicks or drags
 	// the waveform to scrub the playhead. Nil = non-interactive.
 	onSeek func(float64)
@@ -93,6 +100,7 @@ func (w *WaveformWidget) SetLoopState(start, end, beats float64, active bool) {
 	w.loopEnd = end
 	w.loopBeats = beats
 	w.loopActive = active
+	w.layoutVersion++
 	w.mu.Unlock()
 	fyne.Do(func() {
 		w.Refresh()
@@ -107,6 +115,7 @@ func (w *WaveformWidget) SetCuePoint(p float64) {
 		return
 	}
 	w.cuePoint = p
+	w.layoutVersion++
 	w.mu.Unlock()
 	fyne.Do(func() {
 		w.Refresh()
@@ -118,6 +127,7 @@ func (w *WaveformWidget) SetFrequencyPeaks(low, mid, high []float64) {
 	w.peaksLow = low
 	w.peaksMid = mid
 	w.peaksHigh = high
+	w.layoutVersion++
 	w.mu.Unlock()
 	fyne.Do(func() {
 		w.Refresh()

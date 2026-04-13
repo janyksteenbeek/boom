@@ -115,13 +115,11 @@ func (b *BeatFX) ProcessBuffer(samples [][2]float32, n int) {
 		return
 	}
 
-	// Update time parameter (tick once per buffer for efficiency)
-	timeMs := b.timePar.Tick()
+	// Advance the time smoother by the whole block in one step and hand
+	// the end-of-block value to the effect. Time changes are slow enough
+	// that a single per-buffer update is inaudible.
+	timeMs := b.timePar.Advance(n)
 	proc.SetTime(timeMs)
-	// Drain remaining ticks to keep smoother in sync
-	for i := 1; i < n; i++ {
-		b.timePar.Tick()
-	}
 
 	// Copy dry signal
 	copy(b.dry[:n], samples[:n])
@@ -129,9 +127,11 @@ func (b *BeatFX) ProcessBuffer(samples [][2]float32, n int) {
 	// Process in-place (outputs wet signal)
 	proc.ProcessBuffer(samples, n)
 
-	// Blend: out = dry*(1-wet) + wet_signal*wet — per-sample smoothed
+	// Blend: out = dry*(1-wet) + wet_signal*wet — linearly interpolated
+	// across the block instead of per-sample atomic-loading the smoother.
+	wetStart, wetStep := b.wetDry.PrepareBlock(n)
 	for i := 0; i < n; i++ {
-		wet := b.wetDry.Tick()
+		wet := wetStart + wetStep*float32(i)
 		dry := 1.0 - wet
 		samples[i][0] = b.dry[i][0]*dry + samples[i][0]*wet
 		samples[i][1] = b.dry[i][1]*dry + samples[i][1]*wet

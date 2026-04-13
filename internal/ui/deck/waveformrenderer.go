@@ -25,6 +25,14 @@ type waveformRenderer struct {
 	loopOutMrk *canvas.Line
 	loopLabel  *canvas.Text
 	size       fyne.Size
+
+	// Cache of the widget state that was last applied to canvas objects.
+	// If none of these change between Refresh() calls we can skip the
+	// expensive bar/grid/loop relayout and just move the playhead.
+	lastLayoutVersion uint64
+	lastSize          fyne.Size
+	lastHadPeaks      bool
+	layoutReady       bool
 }
 
 func (r *waveformRenderer) buildObjects() {
@@ -129,21 +137,23 @@ type waveformSnapshot struct {
 	cuePoint                      float64
 	loopStart, loopEnd, loopBeats float64
 	loopActive                    bool
+	layoutVersion                 uint64
 }
 
 func (r *waveformRenderer) snapshot() waveformSnapshot {
 	r.widget.mu.RLock()
 	defer r.widget.mu.RUnlock()
 	return waveformSnapshot{
-		peaksLow:   r.widget.peaksLow,
-		peaksMid:   r.widget.peaksMid,
-		peaksHigh:  r.widget.peaksHigh,
-		position:   r.widget.position,
-		cuePoint:   r.widget.cuePoint,
-		loopStart:  r.widget.loopStart,
-		loopEnd:    r.widget.loopEnd,
-		loopBeats:  r.widget.loopBeats,
-		loopActive: r.widget.loopActive,
+		peaksLow:      r.widget.peaksLow,
+		peaksMid:      r.widget.peaksMid,
+		peaksHigh:     r.widget.peaksHigh,
+		position:      r.widget.position,
+		cuePoint:      r.widget.cuePoint,
+		loopStart:     r.widget.loopStart,
+		loopEnd:       r.widget.loopEnd,
+		loopBeats:     r.widget.loopBeats,
+		loopActive:    r.widget.loopActive,
+		layoutVersion: r.widget.layoutVersion,
 	}
 }
 
@@ -154,10 +164,29 @@ func (r *waveformRenderer) Refresh() {
 	if size.Width <= 0 || size.Height <= 0 {
 		return
 	}
-	r.layoutObjects(size)
 
 	peakCount := len(snap.peaksLow)
 	hasPeaks := peakCount > 0 && len(snap.peaksMid) == peakCount && len(snap.peaksHigh) == peakCount
+
+	// Fast path: only the playhead moved. Skip bar layout, grid refresh,
+	// background refresh and the per-object refresh storm — just reposition
+	// r.head and refresh that one line. This is the 30 Hz hot path driven
+	// by ActionPositionUpdate while a track plays.
+	layoutDirty := !r.layoutReady ||
+		snap.layoutVersion != r.lastLayoutVersion ||
+		size != r.lastSize ||
+		hasPeaks != r.lastHadPeaks
+
+	if !layoutDirty {
+		if hasPeaks {
+			r.drawPlayhead(snap.position, size)
+		}
+		return
+	}
+
+	// Slow path: peaks, loop, cue, or size changed — full redraw.
+	r.layoutObjects(size)
+
 	r.empty.Hidden = hasPeaks
 	r.head.Hidden = !hasPeaks
 
@@ -181,6 +210,11 @@ func (r *waveformRenderer) Refresh() {
 	for _, g := range r.grid {
 		g.Refresh()
 	}
+
+	r.lastLayoutVersion = snap.layoutVersion
+	r.lastSize = size
+	r.lastHadPeaks = hasPeaks
+	r.layoutReady = true
 }
 
 // drawBars renders the three stacked frequency layers.

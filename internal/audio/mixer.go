@@ -115,10 +115,8 @@ func (m *MasterMixer) StreamPair(master, cue [][2]float32) {
 func (m *MasterMixer) streamChunk(master, cue [][2]float32) {
 	n := len(master)
 
-	for i := 0; i < n; i++ {
-		m.buf1[i] = [2]float32{}
-		m.buf2[i] = [2]float32{}
-	}
+	clear(m.buf1[:n])
+	clear(m.buf2[:n])
 
 	if len(m.decks) > 0 {
 		m.decks[0].Stream(m.buf1[:n])
@@ -127,16 +125,26 @@ func (m *MasterMixer) streamChunk(master, cue [][2]float32) {
 		m.decks[1].Stream(m.buf2[:n])
 	}
 
+	// Smoothed params are ticked once per block — PrepareBlock returns the
+	// start value and a per-sample linear step. This keeps zipper-noise
+	// prevention intact while eliminating 3 atomic loads per sample.
+	cfStart, cfStep := m.crossfader.PrepareBlock(n)
+	mvStart, mvStep := m.masterVol.PrepareBlock(n)
+
 	for i := 0; i < n; i++ {
-		cf := m.crossfader.Tick()
-		mv := m.masterVol.Tick()
+		fi := float32(i)
+		cf := cfStart + cfStep*fi
+		mv := mvStart + mvStep*fi
 		gainA, gainB := crossfadeGains(cf)
 
 		master[i][0] = (m.buf1[i][0]*gainA + m.buf2[i][0]*gainB) * mv
 		master[i][1] = (m.buf1[i][1]*gainA + m.buf2[i][1]*gainB) * mv
+	}
 
-		if cue != nil {
-			cv := m.cueVol.Tick()
+	if cue != nil {
+		cvStart, cvStep := m.cueVol.PrepareBlock(n)
+		for i := 0; i < n; i++ {
+			cv := cvStart + cvStep*float32(i)
 			cue[i][0] = (m.buf1[i][0] + m.buf2[i][0]) * cv
 			cue[i][1] = (m.buf1[i][1] + m.buf2[i][1]) * cv
 		}
