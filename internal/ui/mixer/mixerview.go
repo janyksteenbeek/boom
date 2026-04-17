@@ -26,7 +26,14 @@ type MixerView struct {
 	peak1      *components.PeakMeter
 	peak2      *components.PeakMeter
 	crossfader *components.Fader
-	content    *fyne.Container
+
+	// Composable sub-sections exposed via accessors so that alternative
+	// layouts can pick and place individual mixer elements independently.
+	masterSection     fyne.CanvasObject
+	cueSection        fyne.CanvasObject
+	crossfaderSection fyne.CanvasObject
+
+	content *fyne.Container
 }
 
 func NewMixerView(bus *event.Bus) *MixerView {
@@ -151,20 +158,28 @@ func NewMixerView(bus *event.Bus) *MixerView {
 		peak2Col,
 	)
 
-	m.content = container.NewVBox(
-		layout.NewSpacer(),
+	// Stash the three composable sub-sections so accessors can return them.
+	m.masterSection = container.NewVBox(
 		container.NewCenter(masterLabel),
 		container.NewCenter(masterRow),
+	)
+	m.cueSection = container.NewVBox(
+		container.NewCenter(cueLabel),
+		container.NewCenter(cueRow),
+	)
+	m.crossfaderSection = container.NewVBox(abRow, m.crossfader)
+
+	m.content = container.NewVBox(
+		layout.NewSpacer(),
+		m.masterSection,
 		layout.NewSpacer(),
 		sep,
 		layout.NewSpacer(),
-		container.NewCenter(cueLabel),
-		container.NewCenter(cueRow),
+		m.cueSection,
 		layout.NewSpacer(),
 		sep2,
 		layout.NewSpacer(),
-		abRow,
-		m.crossfader,
+		m.crossfaderSection,
 		layout.NewSpacer(),
 	)
 
@@ -212,6 +227,20 @@ func (m *MixerView) UpdatePeakLevel(deckID int, v float64) {
 func (m *MixerView) MinSize() fyne.Size {
 	return fyne.NewSize(220, 260)
 }
+
+// MasterSection returns the master fader + peak meters block. Useful for
+// layouts that want the master independent of cue/crossfader.
+func (m *MixerView) MasterSection() fyne.CanvasObject { return m.masterSection }
+
+// CueSection returns the cue knob + per-channel gain faders block.
+func (m *MixerView) CueSection() fyne.CanvasObject { return m.cueSection }
+
+// CrossfaderSection returns the A/B labels + crossfader block.
+func (m *MixerView) CrossfaderSection() fyne.CanvasObject { return m.crossfaderSection }
+
+// Crossfader returns the crossfader fader component. Alternative layouts
+// can subscribe to it or mirror its position into a compact indicator.
+func (m *MixerView) Crossfader() *components.Fader { return m.crossfader }
 
 func (m *MixerView) CreateRenderer() fyne.WidgetRenderer {
 	return widget.NewSimpleRenderer(m.content)

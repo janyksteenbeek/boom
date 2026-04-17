@@ -41,10 +41,19 @@ type WaveformWidget struct {
 	// onSeek is invoked (normalized 0..1) whenever the user clicks or drags
 	// the waveform to scrub the playhead. Nil = non-interactive.
 	onSeek func(float64)
+
+	// maxBars sets the pre-allocated number of canvas.Line objects per
+	// frequency band. 400 is the desktop default; mini-mode lowers this
+	// to 200 to reduce Pi GPU work. Set once at widget construction.
+	maxBars int
 }
 
 var _ fyne.Tappable = (*WaveformWidget)(nil)
 var _ fyne.Draggable = (*WaveformWidget)(nil)
+
+// DefaultMaxBars is the number of canvas.Line objects pre-allocated per
+// frequency band on the desktop layout.
+const DefaultMaxBars = 400
 
 func NewWaveformWidget(deckID int) *WaveformWidget {
 	w := &WaveformWidget{
@@ -52,9 +61,29 @@ func NewWaveformWidget(deckID int) *WaveformWidget {
 		cuePoint:  -1,
 		loopStart: -1,
 		loopEnd:   -1,
+		maxBars:   DefaultMaxBars,
 	}
 	w.ExtendBaseWidget(w)
 	return w
+}
+
+// SetMaxBars overrides the pre-allocated bar count for this widget. Must
+// be called before the widget is shown — the value is read once by the
+// renderer at construction time. Values below 32 are clamped to 32.
+func (w *WaveformWidget) SetMaxBars(n int) {
+	if n < 32 {
+		n = 32
+	}
+	w.mu.Lock()
+	w.maxBars = n
+	w.mu.Unlock()
+}
+
+// MaxBars returns the current bar allocation for this widget.
+func (w *WaveformWidget) MaxBars() int {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.maxBars
 }
 
 // SetOnSeek installs the callback fired when the user clicks or drags the
@@ -145,6 +174,15 @@ func (w *WaveformWidget) SetPosition(pos float64) {
 	fyne.Do(func() {
 		w.Refresh()
 	})
+}
+
+// PlayPosition returns the last-known playhead position in 0..1. Useful
+// for callers that want to recompute time displays without waiting for the
+// next engine tick. Named to avoid collision with fyne.Widget.Position().
+func (w *WaveformWidget) PlayPosition() float64 {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.position
 }
 
 func (w *WaveformWidget) CreateRenderer() fyne.WidgetRenderer {

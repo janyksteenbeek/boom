@@ -4,14 +4,12 @@ import (
 	"sync"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/janyksteenbeek/boom/internal/audio"
 	"github.com/janyksteenbeek/boom/internal/event"
-	boomtheme "github.com/janyksteenbeek/boom/internal/ui/theme"
 	"github.com/janyksteenbeek/boom/pkg/model"
 )
 
@@ -58,10 +56,11 @@ func NewBeatGridStrip(bus *event.Bus) *BeatGridStrip {
 		})
 	})
 
-	sep := canvas.NewRectangle(boomtheme.ColorSeparator)
-	sep.SetMinSize(fyne.NewSize(0, 0.5))
-
-	b.content = container.NewVBox(b.strip1, sep, b.strip2)
+	// GridWithRows gives the two strips equal share of the container
+	// height — critical when mini-mode hands us a tall vertical slot.
+	// On desktop the container sits at its MinSize so this behaves
+	// identically to the old VBox stack.
+	b.content = container.NewGridWithRows(2, b.strip1, b.strip2)
 
 	b.ExtendBaseWidget(b)
 	return b

@@ -18,22 +18,30 @@ import (
 
 // App wires all subsystems together.
 type App struct {
-	bus      *event.Bus
-	cfg      *config.Config
-	engine   *audio.Engine
-	midi     *boomidi.Manager
+	bus       *event.Bus
+	cfg       *config.Config
+	opts      ui.Options
+	engine    *audio.Engine
+	midi      *boomidi.Manager
 	library   *library.Library
 	store     *library.Store
 	playlists *library.PlaylistService
-	analyzer *analysis.Service
-	plugins  *plugin.Registry
-	window   *ui.Window
-	loader   *controller.Loader
-	ledMgr   *controller.LEDManager
-	stopCh   chan struct{}
+	analyzer  *analysis.Service
+	plugins   *plugin.Registry
+	window    *ui.Window
+	loader    *controller.Loader
+	ledMgr    *controller.LEDManager
+	stopCh    chan struct{}
 }
 
+// New is the legacy entry point. Equivalent to NewWithOptions(ui.Options{}).
 func New() (*App, error) {
+	return NewWithOptions(ui.Options{})
+}
+
+// NewWithOptions wires all subsystems and applies UI Options (layout,
+// fullscreen, kiosk, force-size).
+func NewWithOptions(opts ui.Options) (*App, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, err
@@ -66,7 +74,12 @@ func New() (*App, error) {
 		log.Printf("controller setup: %v", err)
 	}
 
-	window := ui.NewWindow(bus, cfg, playlists)
+	// Apply config-driven UI defaults where the caller didn't override
+	// via flags. This lets the user persist layout preferences in
+	// configs/boom.yaml without always typing --mini.
+	mergedOpts := mergeUIOptions(opts, cfg)
+
+	window := ui.NewWindowWithOptions(bus, cfg, playlists, mergedOpts)
 
 	// Wire library search results to browser
 	bus.Subscribe(event.TopicLibrary, func(ev event.Event) error {
@@ -80,19 +93,20 @@ func New() (*App, error) {
 	})
 
 	app := &App{
-		bus:      bus,
-		cfg:      cfg,
-		engine:   engine,
-		midi:     midiMgr,
+		bus:       bus,
+		cfg:       cfg,
+		opts:      mergedOpts,
+		engine:    engine,
+		midi:      midiMgr,
 		library:   lib,
 		store:     store,
 		playlists: playlists,
-		analyzer: analyzer,
-		plugins:  plugins,
-		window:   window,
-		loader:   loader,
-		ledMgr:   ledMgr,
-		stopCh:   make(chan struct{}),
+		analyzer:  analyzer,
+		plugins:   plugins,
+		window:    window,
+		loader:    loader,
+		ledMgr:    ledMgr,
+		stopCh:    make(chan struct{}),
 	}
 
 	app.subscribeCuePersistence()
@@ -146,6 +160,30 @@ func (a *App) shutdown() {
 		a.loader.Close()
 	}
 	a.library.Close()
+}
+
+// mergeUIOptions combines CLI-supplied Options with config-file UISettings.
+// CLI takes precedence per field; any CLI field left at its zero value
+// falls back to the config value. This lets a Pi kiosk bake its layout
+// into boom.yaml while still allowing a dev to override via flags.
+func mergeUIOptions(cli ui.Options, cfg *config.Config) ui.Options {
+	merged := cli
+	if merged.Layout == "" {
+		merged.Layout = cfg.UI.Layout
+	}
+	if !merged.Fullscreen {
+		merged.Fullscreen = cfg.UI.Fullscreen
+	}
+	if !merged.Kiosk {
+		merged.Kiosk = cfg.UI.Kiosk
+	}
+	if merged.ForceWidth == 0 && cfg.UI.WindowW > 0 {
+		merged.ForceWidth = cfg.UI.WindowW
+	}
+	if merged.ForceHeight == 0 && cfg.UI.WindowH > 0 {
+		merged.ForceHeight = cfg.UI.WindowH
+	}
+	return merged
 }
 
 // applyEngineSettings pushes the relevant config sections into the engine.

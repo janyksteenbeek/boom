@@ -30,10 +30,10 @@ type DeckView struct {
 	cueBtn  *components.DJButton
 	syncBtn *components.DJButton
 
-	loopInBtn    *components.DJButton
-	loopOutBtn   *components.DJButton
-	reloopBtn    *components.DJButton
-	loopHalveBtn *components.DJButton
+	loopInBtn     *components.DJButton
+	loopOutBtn    *components.DJButton
+	reloopBtn     *components.DJButton
+	loopHalveBtn  *components.DJButton
 	loopDoubleBtn *components.DJButton
 
 	volKnob *components.Knob
@@ -51,9 +51,21 @@ type DeckView struct {
 	bpmText       *canvas.Text
 	bpmLabel      *canvas.Text
 	bpmOrigText   *canvas.Text
+	tempoPctText  *canvas.Text
+	keyText       *canvas.Text
+	keyBadge      *fyne.Container
 	timeText      *canvas.Text
 	durText       *canvas.Text
 	remainingText *canvas.Text
+
+	// Composed sub-rows exposed via accessors. Keeping them as fields lets
+	// alternative layouts (e.g. mini-mode) pick individual rows rather than
+	// embedding the whole DeckView.
+	headerRow    fyne.CanvasObject
+	timeRow      fyne.CanvasObject
+	transportRow fyne.CanvasObject
+	loopRow      fyne.CanvasObject
+	knobsRow     fyne.CanvasObject
 
 	// origBPM is the analyzed BPM as stored on the track. It's shown in
 	// small text next to the current BPM whenever the user has nudged the
@@ -61,6 +73,12 @@ type DeckView struct {
 	origBPM    float64
 	tempoRatio float64       // current tempo multiplier, 1.0 = original
 	duration   time.Duration // track duration once known
+
+	// showRemainingPrimary flips the prominent vs secondary reading in the
+	// time row: when true, the left (large) slot shows remaining time and
+	// the right (smaller) slot shows elapsed — the reverse of the default.
+	// Tapping the time row toggles it.
+	showRemainingPrimary bool
 
 	content *fyne.Container
 }
@@ -70,8 +88,23 @@ type DeckView struct {
 // needing to spam the button.
 const bpmNudgeStep = 0.1
 
+// Options tunes which DeckView sub-elements are visible. Mini-mode uses
+// Compact to drop the redundant "DECK N" label, the on-screen BPM
+// nudge buttons (hardware covers that), and the "BPM" text label so
+// the header breathes on an 800-px-wide screen.
+type Options struct {
+	Compact bool
+}
+
+// NewDeckView constructs the default (desktop) deck view.
 func NewDeckView(deckID int, bus *event.Bus) *DeckView {
+	return NewDeckViewWithOptions(deckID, bus, Options{})
+}
+
+// NewDeckViewWithOptions constructs a deck view with tunable chrome.
+func NewDeckViewWithOptions(deckID int, bus *event.Bus, opts Options) *DeckView {
 	d := &DeckView{deckID: deckID, bus: bus, tempoRatio: 1.0}
+	compact := opts.Compact
 	deckColor := boomtheme.DeckColor(deckID)
 
 	d.waveform = NewWaveformWidget(deckID)
@@ -95,7 +128,11 @@ func NewDeckView(deckID int, bus *event.Bus) *DeckView {
 	d.trackArtist.TextSize = 11
 
 	d.bpmText = canvas.NewText("---", deckColor)
-	d.bpmText.TextSize = 26
+	if compact {
+		d.bpmText.TextSize = 20
+	} else {
+		d.bpmText.TextSize = 26
+	}
 	d.bpmText.TextStyle = fyne.TextStyle{Bold: true, Monospace: true}
 	d.bpmText.Alignment = fyne.TextAlignTrailing
 
@@ -131,6 +168,26 @@ func NewDeckView(deckID int, bus *event.Bus) *DeckView {
 	d.remainingText.TextSize = 15
 	d.remainingText.TextStyle = fyne.TextStyle{Monospace: true}
 	d.remainingText.Alignment = fyne.TextAlignTrailing
+
+	// Tempo-nudge percentage (e.g. "+2.4%"); shown as a compact ghost label
+	// next to the BPM. Empty when the deck is at 1.0x.
+	d.tempoPctText = canvas.NewText("", boomtheme.ColorLabelTertiary)
+	d.tempoPctText.TextSize = 10
+	d.tempoPctText.TextStyle = fyne.TextStyle{Monospace: true}
+	d.tempoPctText.Alignment = fyne.TextAlignTrailing
+
+	// Musical key badge (e.g. "5A" in Camelot, "Am" in traditional).
+	// Rendered as a small tinted pill next to the BPM so harmonic-mixing
+	// info is glanceable across the room. Empty when analysis hasn't
+	// produced a key yet.
+	d.keyText = canvas.NewText("", boomtheme.ColorLabel)
+	d.keyText.TextSize = 10
+	d.keyText.TextStyle = fyne.TextStyle{Bold: true, Monospace: true}
+	d.keyText.Alignment = fyne.TextAlignCenter
+	keyBg := canvas.NewRectangle(boomtheme.ColorBackgroundTertiary)
+	keyBg.CornerRadius = 3
+	d.keyBadge = container.NewStack(keyBg, container.NewPadded(d.keyText))
+	d.keyBadge.Hide()
 
 	// Transport buttons
 	d.playBtn = components.NewDJButton("PLAY", boomtheme.ColorPlayActive, func() {
@@ -198,26 +255,38 @@ func NewDeckView(deckID int, bus *event.Bus) *DeckView {
 
 	// --- Layout ---
 
-	// Header row
-	infoLeft := container.NewVBox(d.deckLabel, d.trackTitle, d.trackArtist)
+	// Header left. Compact mode drops the redundant "DECK N" label —
+	// the mini-card's accent strip already encodes that — so the title
+	// gets top billing and there's room to breathe.
+	var infoLeft *fyne.Container
+	if compact {
+		infoLeft = container.NewVBox(d.trackTitle, d.trackArtist)
+	} else {
+		infoLeft = container.NewVBox(d.deckLabel, d.trackTitle, d.trackArtist)
+	}
 
 	// Header right side: big BPM count on top, then a compact row beneath
 	// containing the -/+ nudge buttons, the "BPM" label, and the ghosted
-	// original BPM (clickable to reset).
+	// original BPM (clickable to reset). Compact mode drops the nudge
+	// buttons and the "BPM" text label (hardware-driven pitch fader
+	// covers that).
 	nudgeBtnSize := fyne.NewSize(22, 18)
-	bpmSubRow := container.NewHBox(
-		layout.NewSpacer(),
-		d.bpmOrigTap,
-		container.New(layout.NewGridWrapLayout(nudgeBtnSize), d.bpmMinusBtn),
-		container.New(layout.NewGridWrapLayout(nudgeBtnSize), d.bpmPlusBtn),
-		d.bpmLabel,
-	)
+	bpmSubRow := container.NewHBox(layout.NewSpacer(), d.keyBadge, d.bpmOrigTap, d.tempoPctText)
+	if !compact {
+		bpmSubRow.Add(container.New(layout.NewGridWrapLayout(nudgeBtnSize), d.bpmMinusBtn))
+		bpmSubRow.Add(container.New(layout.NewGridWrapLayout(nudgeBtnSize), d.bpmPlusBtn))
+		bpmSubRow.Add(d.bpmLabel)
+	}
 	bpmRight := container.NewVBox(layout.NewSpacer(), d.bpmText, bpmSubRow)
-	header := container.NewBorder(nil, nil, infoLeft, bpmRight)
+	d.headerRow = container.NewBorder(nil, nil, infoLeft, bpmRight)
 
-	// Time row — current / total on the left, remaining time on the right
+	// Time row — current / total on the left, remaining time on the right.
+	// Wrapped in a tappable so clicking the row toggles which reading gets
+	// the prominent slot (elapsed vs remaining). Useful on small / mini
+	// layouts where the user wants the remaining time at a glance.
 	timeLeft := container.NewHBox(d.timeText, d.durText)
-	timeRow := container.NewBorder(nil, nil, timeLeft, d.remainingText)
+	timeBorder := container.NewBorder(nil, nil, timeLeft, d.remainingText)
+	d.timeRow = newTappableContainer(timeBorder, func() { d.toggleTimeMode() })
 
 	// Separator
 	sep := canvas.NewRectangle(boomtheme.ColorSeparator)
@@ -225,7 +294,7 @@ func NewDeckView(deckID int, bus *event.Bus) *DeckView {
 
 	// Transport buttons - fixed size in a row
 	btnSize := fyne.NewSize(72, 32)
-	transportRow := container.NewHBox(
+	d.transportRow = container.NewHBox(
 		container.New(layout.NewGridWrapLayout(btnSize), d.playBtn),
 		container.New(layout.NewGridWrapLayout(btnSize), d.cueBtn),
 		container.New(layout.NewGridWrapLayout(btnSize), d.syncBtn),
@@ -235,7 +304,7 @@ func NewDeckView(deckID int, bus *event.Bus) *DeckView {
 	// stays at or above DJButton.MinSize (60×28) so GridWrap doesn't clip
 	// hit-testing on the smaller ones.
 	loopBtnSize := fyne.NewSize(60, 28)
-	loopRow := container.NewHBox(
+	d.loopRow = container.NewHBox(
 		container.New(layout.NewGridWrapLayout(loopBtnSize), d.loopInBtn),
 		container.New(layout.NewGridWrapLayout(loopBtnSize), d.loopOutBtn),
 		container.New(layout.NewGridWrapLayout(loopBtnSize), d.reloopBtn),
@@ -243,11 +312,11 @@ func NewDeckView(deckID int, bus *event.Bus) *DeckView {
 		container.New(layout.NewGridWrapLayout(loopBtnSize), d.loopDoubleBtn),
 	)
 
-	buttonsRow := container.NewVBox(transportRow, loopRow)
+	buttonsRow := container.NewVBox(d.transportRow, d.loopRow)
 
 	// Knobs in a row with fixed size
 	knobSize := fyne.NewSize(54, 72)
-	knobsRow := container.NewHBox(
+	d.knobsRow = container.NewHBox(
 		container.New(layout.NewGridWrapLayout(knobSize), d.volKnob),
 		container.New(layout.NewGridWrapLayout(knobSize), d.hiKnob),
 		container.New(layout.NewGridWrapLayout(knobSize), d.midKnob),
@@ -255,13 +324,13 @@ func NewDeckView(deckID int, bus *event.Bus) *DeckView {
 	)
 
 	// Controls section: buttons left, knobs right
-	controlsRow := container.NewBorder(nil, nil, buttonsRow, knobsRow)
+	controlsRow := container.NewBorder(nil, nil, buttonsRow, d.knobsRow)
 
 	// Use VSplit so waveform and controls both get enough space
 	// Top part: header + waveform (expandable)
 	// Bottom part: time + buttons/knobs (fixed height)
-	topSection := container.NewBorder(header, nil, nil, nil, d.waveform)
-	bottomSection := container.NewVBox(timeRow, sep, controlsRow)
+	topSection := container.NewBorder(d.headerRow, nil, nil, nil, d.waveform)
+	bottomSection := container.NewVBox(d.timeRow, sep, controlsRow)
 
 	d.content = container.NewBorder(
 		nil,
@@ -293,18 +362,66 @@ func (d *DeckView) UpdatePosition(pos float64) {
 	// formatDuration is 1-Hz granular (M:SS). The position event fires at
 	// ~30 Hz, so most updates produce identical strings — skip the Refresh
 	// and the closure allocation when neither text changed.
-	newCurrent := formatDuration(current)
-	newRemaining := "-" + formatDuration(remaining)
-	if newCurrent == d.timeText.Text && newRemaining == d.remainingText.Text {
+	var newPrimary, newSecondary string
+	if d.showRemainingPrimary {
+		newPrimary = "-" + formatDuration(remaining)
+		newSecondary = formatDuration(current)
+	} else {
+		newPrimary = formatDuration(current)
+		newSecondary = "-" + formatDuration(remaining)
+	}
+	if newPrimary == d.timeText.Text && newSecondary == d.remainingText.Text {
 		return
 	}
-	d.timeText.Text = newCurrent
-	d.remainingText.Text = newRemaining
+	d.timeText.Text = newPrimary
+	d.remainingText.Text = newSecondary
 	fyne.Do(func() {
 		d.timeText.Refresh()
 		d.remainingText.Refresh()
 	})
 }
+
+// toggleTimeMode flips the time row between "big = elapsed" and "big =
+// remaining". The secondary slot always shows whichever reading isn't
+// primary. Triggered by tapping the time row.
+func (d *DeckView) toggleTimeMode() {
+	d.showRemainingPrimary = !d.showRemainingPrimary
+	if d.duration <= 0 {
+		if d.showRemainingPrimary {
+			d.timeText.Text = "-0:00"
+			d.remainingText.Text = "0:00"
+		} else {
+			d.timeText.Text = "0:00"
+			d.remainingText.Text = "-0:00"
+		}
+		fyne.Do(func() {
+			d.timeText.Refresh()
+			d.remainingText.Refresh()
+		})
+		return
+	}
+	d.UpdatePosition(d.waveform.PlayPosition())
+}
+
+// Header returns the title/artist/BPM row as a standalone canvas object so
+// alternative layouts (e.g. mini-mode) can compose it without pulling in
+// the whole DeckView content tree.
+func (d *DeckView) Header() fyne.CanvasObject { return d.headerRow }
+
+// TimeRow returns the elapsed/remaining row.
+func (d *DeckView) TimeRow() fyne.CanvasObject { return d.timeRow }
+
+// TransportRow returns the PLAY/CUE/SYNC row.
+func (d *DeckView) TransportRow() fyne.CanvasObject { return d.transportRow }
+
+// LoopRow returns the compact IN/OUT/RELOOP/½/2× row.
+func (d *DeckView) LoopRow() fyne.CanvasObject { return d.loopRow }
+
+// KnobsRow returns the VOL/HI/MID/LO knob row.
+func (d *DeckView) KnobsRow() fyne.CanvasObject { return d.knobsRow }
+
+// WaveformWidget returns the per-deck full-track overview widget.
+func (d *DeckView) WaveformWidget() *WaveformWidget { return d.waveform }
 
 // UpdateCuePoint refreshes the visual cue marker on the waveform.
 // Pass a negative value to hide it.
@@ -373,6 +490,11 @@ func (d *DeckView) SetWaveformData(data *audio.WaveformData) {
 
 func (d *DeckView) SetTrack(track *model.Track) {
 	d.tempoRatio = 1.0
+	if track != nil {
+		d.setKey(track.Key)
+	} else {
+		d.setKey("")
+	}
 	if track == nil {
 		d.currentTrackID = ""
 		d.origBPM = 0
@@ -381,9 +503,15 @@ func (d *DeckView) SetTrack(track *model.Track) {
 		d.trackArtist.Text = ""
 		d.bpmText.Text = "---"
 		d.bpmOrigText.Text = ""
-		d.timeText.Text = "0:00"
+		d.tempoPctText.Text = ""
+		if d.showRemainingPrimary {
+			d.timeText.Text = "-0:00"
+			d.remainingText.Text = "0:00"
+		} else {
+			d.timeText.Text = "0:00"
+			d.remainingText.Text = "-0:00"
+		}
 		d.durText.Text = "/ 0:00"
-		d.remainingText.Text = "-0:00"
 	} else {
 		d.currentTrackID = track.ID
 		d.origBPM = track.BPM
@@ -399,12 +527,22 @@ func (d *DeckView) SetTrack(track *model.Track) {
 			d.bpmText.Text = "---"
 		}
 		d.bpmOrigText.Text = ""
-		d.timeText.Text = "0:00"
+		d.tempoPctText.Text = ""
 		d.durText.Text = fmt.Sprintf("/ %s", formatDuration(track.Duration))
-		if track.Duration > 0 {
-			d.remainingText.Text = "-" + formatDuration(track.Duration)
+		if d.showRemainingPrimary {
+			if track.Duration > 0 {
+				d.timeText.Text = "-" + formatDuration(track.Duration)
+			} else {
+				d.timeText.Text = "-0:00"
+			}
+			d.remainingText.Text = "0:00"
 		} else {
-			d.remainingText.Text = "-0:00"
+			d.timeText.Text = "0:00"
+			if track.Duration > 0 {
+				d.remainingText.Text = "-" + formatDuration(track.Duration)
+			} else {
+				d.remainingText.Text = "-0:00"
+			}
 		}
 	}
 	fyne.Do(func() {
@@ -412,6 +550,7 @@ func (d *DeckView) SetTrack(track *model.Track) {
 		d.trackArtist.Refresh()
 		d.bpmText.Refresh()
 		d.bpmOrigText.Refresh()
+		d.tempoPctText.Refresh()
 		d.timeText.Refresh()
 		d.durText.Refresh()
 		d.remainingText.Refresh()
@@ -423,11 +562,29 @@ func (d *DeckView) UpdateAnalysis(trackID string, bpm float64, key string) {
 	if d.currentTrackID != trackID {
 		return
 	}
-	if bpm <= 0 {
+	if bpm > 0 {
+		d.origBPM = bpm
+		d.refreshBPMDisplay()
+	}
+	d.setKey(key)
+}
+
+// setKey renders (or hides) the musical-key badge. Updates are routed
+// onto the Fyne thread so callers don't have to marshal themselves.
+func (d *DeckView) setKey(key string) {
+	if key == "" {
+		d.keyText.Text = ""
+		fyne.Do(func() {
+			d.keyText.Refresh()
+			d.keyBadge.Hide()
+		})
 		return
 	}
-	d.origBPM = bpm
-	d.refreshBPMDisplay()
+	d.keyText.Text = key
+	fyne.Do(func() {
+		d.keyText.Refresh()
+		d.keyBadge.Show()
+	})
 }
 
 // UpdateVolume sets the volume knob from an external source (MIDI).
@@ -483,18 +640,27 @@ func (d *DeckView) refreshBPMDisplay() {
 	if d.origBPM <= 0 {
 		d.bpmText.Text = "---"
 		d.bpmOrigText.Text = ""
+		d.tempoPctText.Text = ""
 	} else {
 		current := d.origBPM * d.tempoRatio
 		d.bpmText.Text = fmt.Sprintf("%.1f", current)
 		if nearlyEqual(current, d.origBPM) {
 			d.bpmOrigText.Text = ""
+			d.tempoPctText.Text = ""
 		} else {
 			d.bpmOrigText.Text = fmt.Sprintf("%.1f", d.origBPM)
+			pct := (d.tempoRatio - 1.0) * 100.0
+			if pct >= 0 {
+				d.tempoPctText.Text = fmt.Sprintf("+%.1f%%", pct)
+			} else {
+				d.tempoPctText.Text = fmt.Sprintf("%.1f%%", pct)
+			}
 		}
 	}
 	fyne.Do(func() {
 		d.bpmText.Refresh()
 		d.bpmOrigText.Refresh()
+		d.tempoPctText.Refresh()
 	})
 }
 
@@ -552,6 +718,37 @@ func (t *tappableText) MinSize() fyne.Size {
 
 func (t *tappableText) CreateRenderer() fyne.WidgetRenderer {
 	return widget.NewSimpleRenderer(t.text)
+}
+
+// tappableContainer wraps any CanvasObject in a tappable widget. Used to
+// make a whole row (e.g. the time display) click-toggle without changing
+// the layout of its children.
+type tappableContainer struct {
+	widget.BaseWidget
+	child fyne.CanvasObject
+	onTap func()
+}
+
+var _ fyne.Tappable = (*tappableContainer)(nil)
+
+func newTappableContainer(child fyne.CanvasObject, onTap func()) *tappableContainer {
+	t := &tappableContainer{child: child, onTap: onTap}
+	t.ExtendBaseWidget(t)
+	return t
+}
+
+func (t *tappableContainer) Tapped(_ *fyne.PointEvent) {
+	if t.onTap != nil {
+		t.onTap()
+	}
+}
+
+func (t *tappableContainer) MinSize() fyne.Size {
+	return t.child.MinSize()
+}
+
+func (t *tappableContainer) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(t.child)
 }
 
 // UpdateEQHigh sets the HI EQ knob from an external source (MIDI).

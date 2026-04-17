@@ -1,0 +1,21 @@
+# Hide the mouse cursor after 0.5 s of inactivity. Used alongside
+# boom-kiosk.service so the Pi kiosk has no visible cursor.
+#
+# Install:
+#   sudo apt install unclutter
+#   cp unclutter.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now unclutter
+
+[Unit]
+Description=Hide mouse cursor on idle
+After=graphical-session.target
+
+[Service]
+Type=simple
+Environment=DISPLAY=:0
+ExecStart=/usr/bin/unclutter -idle 0.5 -root
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

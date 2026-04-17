@@ -58,8 +58,9 @@ func (r *waveformRenderer) buildObjects() {
 		r.grid[i].StrokeWidth = 0.5
 	}
 
-	// Pre-allocate bars for all 3 frequency layers
-	const maxBars = 400
+	// Pre-allocate bars for all 3 frequency layers. The count is read
+	// from the widget so mini-mode can halve it to reduce Pi GPU work.
+	maxBars := r.widget.MaxBars()
 	r.barsLow = make([]*canvas.Line, maxBars)
 	r.barsMid = make([]*canvas.Line, maxBars)
 	r.barsHigh = make([]*canvas.Line, maxBars)

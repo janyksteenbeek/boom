@@ -51,10 +51,35 @@ func (b *BrowserView) nextFocus() browseFocus {
 	}
 }
 
+// SidebarMode selects how the left-hand navigation renders.
+type SidebarMode int
+
+const (
+	// SidebarModeClassic is the desktop source-list sidebar (default).
+	SidebarModeClassic SidebarMode = iota
+	// SidebarModeFolder swaps the sidebar for a CDJ-style breadcrumb + single
+	// folder listing that navigates one level at a time. Used by mini-mode
+	// where a fixed 180-px sidebar eats too much horizontal space.
+	SidebarModeFolder
+)
+
+// BrowserOpts tunes which BrowserView sub-panels are rendered. The zero
+// value matches the pre-refactor desktop behavior, so existing call sites
+// keep working by passing a BrowserOpts{}.
+type BrowserOpts struct {
+	HideToolbar      bool
+	HideColumnHeader bool
+	SidebarMode      SidebarMode
+	// SidebarWidth, when > 0, overrides the default sidebar width. Ignored
+	// in SidebarModeFolder (folder mode draws full-width anyway).
+	SidebarWidth float32
+}
+
 type BrowserView struct {
 	widget.BaseWidget
 
 	bus               *event.Bus
+	opts              BrowserOpts
 	playlists         *library.PlaylistService
 	sidebar           *Sidebar
 	toolbar           *BrowserToolbar
@@ -72,8 +97,17 @@ type BrowserView struct {
 	currentPlaylistID string
 }
 
+// NewBrowserView creates the default desktop browser view. Equivalent to
+// NewBrowserViewWithOpts(bus, playlists, BrowserOpts{}).
 func NewBrowserView(bus *event.Bus, playlists *library.PlaylistService) *BrowserView {
-	b := &BrowserView{bus: bus, playlists: playlists, targetDeck: 1}
+	return NewBrowserViewWithOpts(bus, playlists, BrowserOpts{})
+}
+
+// NewBrowserViewWithOpts builds a BrowserView with caller-controlled
+// composition. Mini-mode uses this with HideToolbar/HideColumnHeader true
+// and SidebarModeFolder so the overlay stays compact on a 5" screen.
+func NewBrowserViewWithOpts(bus *event.Bus, playlists *library.PlaylistService, opts BrowserOpts) *BrowserView {
+	b := &BrowserView{bus: bus, opts: opts, playlists: playlists, targetDeck: 1}
 
 	b.sidebar = NewSidebar(func(categoryID string) {
 		b.onCategorySelected(categoryID)
@@ -116,20 +150,41 @@ func NewBrowserView(bus *event.Bus, playlists *library.PlaylistService) *Browser
 	b.trackListFocusBar = canvas.NewRectangle(color.Transparent)
 	b.trackListFocusBar.SetMinSize(fyne.NewSize(2, 0))
 
-	rightInner := container.NewBorder(
-		container.NewVBox(b.toolbar, b.columnHeader),
-		nil, nil, nil,
-		b.trackList,
-	)
+	// Top bar inside the right pane: toolbar + column header, each optionally
+	// hidden via BrowserOpts so mini-mode's overlay can strip them.
+	var top fyne.CanvasObject
+	switch {
+	case b.opts.HideToolbar && b.opts.HideColumnHeader:
+		top = nil
+	case b.opts.HideToolbar:
+		top = b.columnHeader
+	case b.opts.HideColumnHeader:
+		top = b.toolbar
+	default:
+		top = container.NewVBox(b.toolbar, b.columnHeader)
+	}
+	rightInner := container.NewBorder(top, nil, nil, nil, b.trackList)
 	rightPanel := container.NewBorder(nil, nil, b.trackListFocusBar, nil, rightInner)
 
 	sidebarWrap := container.NewBorder(nil, nil, b.sidebarFocusBar, sidebarSep, b.sidebar)
-	b.content = container.NewBorder(
-		nil, nil,
-		sidebarWrap,
-		nil,
-		rightPanel,
-	)
+
+	switch b.opts.SidebarMode {
+	case SidebarModeFolder:
+		// Folder-mode: sidebar stays on the left but in a narrow compact
+		// column (120 px vs the classic 180 px) so the track list gets
+		// more breathing room on an 800-px-wide overlay. Scroll + focus
+		// paths are unchanged; the sidebar still acts as the top-level
+		// folder index (Playlists / Genres / BPM / etc.).
+		compactWrap := container.New(&fixedWidthLayout{w: 120}, sidebarWrap)
+		b.content = container.NewBorder(nil, nil, compactWrap, nil, rightPanel)
+	default:
+		b.content = container.NewBorder(
+			nil, nil,
+			sidebarWrap,
+			nil,
+			rightPanel,
+		)
+	}
 
 	b.applyFocus()
 	b.subscribeEvents()

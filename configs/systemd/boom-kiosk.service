@@ -1,0 +1,27 @@
+# Boom DJ — Raspberry Pi kiosk unit (user-level).
+#
+# Install:
+#   cp boom-kiosk.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now boom-kiosk
+#
+# Pairs with `unclutter` (installed separately) to hide the mouse cursor.
+# See docs/pi-kiosk.md for the full setup.
+
+[Unit]
+Description=Boom DJ — kiosk (mini-mode, fullscreen)
+After=graphical-session.target sound.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+Environment=DISPLAY=:0
+ExecStart=/usr/local/bin/boom --mini --fullscreen --kiosk
+Restart=on-failure
+RestartSec=5
+# Slight startup delay so the compositor is ready before we grab the
+# screen. Not strictly required on Pi OS Bookworm but harmless.
+ExecStartPre=/bin/sleep 2
+
+[Install]
+WantedBy=default.target

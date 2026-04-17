@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Boom DJ (kiosk)
+Comment=Launch Boom DJ in mini/kiosk mode on login
+Exec=/usr/local/bin/boom --mini --fullscreen --kiosk
+Terminal=false
+Categories=Audio;
+X-GNOME-Autostart-enabled=true

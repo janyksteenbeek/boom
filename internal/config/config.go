@@ -71,6 +71,7 @@ type Config struct {
 	Loop                  LoopSettings    `yaml:"loop"`
 	Jog                   JogSettings     `yaml:"jog"`
 	Library               LibrarySettings `yaml:"library"`
+	UI                    UISettings      `yaml:"ui"`
 
 	// loadedPath is the on-disk path this config was read from (or would be
 	// written to on Save). Not serialized — it's populated by LoadFrom.
@@ -88,6 +89,18 @@ type JogSettings struct {
 	VinylMode          bool    `yaml:"vinyl_mode"`          // top touch enables scratching when true
 	ScratchSensitivity float64 `yaml:"scratch_sensitivity"` // default ~0.4 (vinyl scratch feel)
 	PitchSensitivity   float64 `yaml:"pitch_sensitivity"`   // default ~0.04 (pitch bend nudge)
+}
+
+// UISettings holds startup-time UI preferences. CLI flags override these
+// at runtime so a Pi kiosk deployment can hard-code mini+fullscreen+kiosk
+// in boom.yaml and the binary can still be launched desktop-style on a
+// dev machine via flags.
+type UISettings struct {
+	Layout     string `yaml:"layout"`         // "desktop" | "mini" | "" (desktop)
+	Fullscreen bool   `yaml:"fullscreen"`
+	Kiosk      bool   `yaml:"kiosk"`
+	WindowW    int    `yaml:"window_width"`   // 0 = layout default
+	WindowH    int    `yaml:"window_height"`
 }
 
 // LibrarySettings holds persistent-library preferences. MMapSizeMB caps the

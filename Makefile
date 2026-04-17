@@ -1,4 +1,4 @@
-.PHONY: build run clean test lint \
+.PHONY: build run run-mini clean test lint \
 	build-linux build-linux-arm64 build-windows build-all \
 	package package-darwin-amd64 package-darwin-arm64 package-linux-amd64 package-linux-arm64 package-windows package-all \
 	midi-train
@@ -18,6 +18,11 @@ build:
 
 run: build
 	./$(BUILD_DIR)/$(APP_NAME)
+
+# Launch Boom in mini-mode at the Pi 5" screen size (800x480) for
+# dev-machine previews. Swap --force-size=1024x600 for a 7" preview.
+run-mini: build
+	./$(BUILD_DIR)/$(APP_NAME) --mini --force-size=800x480
 
 clean:
 	rm -rf $(BUILD_DIR)
