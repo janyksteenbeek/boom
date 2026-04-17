@@ -326,7 +326,15 @@ func (w *Window) subscribeEvents() {
 			}
 			w.beatGrid.SetLoopState(ev.DeckID, state)
 		case event.ActionVULevel:
-			w.mixer.UpdatePeakLevel(ev.DeckID, ev.Value)
+			// The mixer is constructed in every mode for event wiring,
+			// but in mini-mode it's not placed in the render tree —
+			// calling UpdatePeakLevel on those invisible peak meters
+			// still drags ~1 kHz of canvas Refresh work through fyne.Do.
+			// The mini layout has its own deck VUs that subscribe
+			// directly, so skip the mixer route here.
+			if w.opts.Layout != "mini" {
+				w.mixer.UpdatePeakLevel(ev.DeckID, ev.Value)
+			}
 		}
 		return nil
 	})

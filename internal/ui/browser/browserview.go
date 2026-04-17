@@ -57,7 +57,7 @@ type SidebarMode int
 const (
 	// SidebarModeClassic is the desktop source-list sidebar (default).
 	SidebarModeClassic SidebarMode = iota
-	// SidebarModeFolder swaps the sidebar for a CDJ-style breadcrumb + single
+	// SidebarModeFolder swaps the sidebar for a breadcrumb + single
 	// folder listing that navigates one level at a time. Used by mini-mode
 	// where a fixed 180-px sidebar eats too much horizontal space.
 	SidebarModeFolder

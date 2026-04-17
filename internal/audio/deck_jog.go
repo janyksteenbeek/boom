@@ -3,8 +3,8 @@ package audio
 import "math"
 
 // VinylMode reports whether the deck is in vinyl mode (top touch enables
-// scratching). When false the deck is in CDJ "jog mode" — all rotation is
-// pitch bend.
+// scratching). When false the deck is in plain "jog mode" — all rotation
+// is pitch bend.
 func (d *Deck) VinylMode() bool { return d.vinylMode.Load() }
 
 // SetVinylMode toggles vinyl mode. Switching to jog mode while the platter

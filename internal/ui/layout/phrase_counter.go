@@ -171,19 +171,15 @@ func (p *phraseCounter) repaint(beatIdx int) {
 		inPhrase = beatIdx % phraseBeats
 	}
 
-	// Build the color set off-thread, then apply on the Fyne thread
-	// in a single pass so we don't churn the driver with 16 separate
-	// Refresh calls scheduled from arbitrary goroutines.
+	// Build the color set off-thread.
 	colors := make([]color.Color, phraseBeats)
 	for i := range colors {
 		switch {
 		case inPhrase < 0:
 			colors[i] = p.dim
 		case i == inPhrase:
-			// Current beat — full accent.
 			colors[i] = p.accent
 		case i < inPhrase:
-			// Already played — deck color muted 60 %.
 			c := p.accent
 			c.A = 160
 			colors[i] = c
@@ -191,12 +187,34 @@ func (p *phraseCounter) repaint(beatIdx int) {
 			colors[i] = p.dim
 		}
 	}
+
+	// Apply on the Fyne thread. Only refresh blocks whose color
+	// actually changed — beat-boundary crossings typically mutate just
+	// two blocks (the old current block dims to "played", and the new
+	// current block lights up). Avoids the 16×Refresh storm that was
+	// enqueuing ~50 extra canvas invalidations per second while both
+	// decks played.
 	fyne.Do(func() {
 		for i, c := range colors {
+			if colorEq(p.blocks[i].FillColor, c) {
+				continue
+			}
 			p.blocks[i].FillColor = c
 			p.blocks[i].Refresh()
 		}
 	})
+}
+
+// colorEq compares two colors via their RGBA tuples. Fast enough to
+// run 16× per beat — avoids allocating a color.RGBA wrapper for every
+// comparison.
+func colorEq(a, b color.Color) bool {
+	if a == b {
+		return true
+	}
+	ar, ag, ab, aa := a.RGBA()
+	br, bg, bb, ba := b.RGBA()
+	return ar == br && ag == bg && ab == bb && aa == ba
 }
 
 func (p *phraseCounter) MinSize() fyne.Size {

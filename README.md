@@ -99,6 +99,91 @@ On first run Boom creates `configs/boom.yaml` with sensible defaults and an empt
 | `jog.pitch_sensitivity` | Gain applied to pitch-bend encoder ticks. |
 | `library.mmap_size_mb` | Cap on how much of the SQLite library may be memory-mapped. Defaults to `64`; raise to `256`+ on desktops with large libraries, lower to `16`–`32` on memory-constrained boards like Raspberry Pi 2 GB. Falls back to regular reads beyond the cap — never fails. |
 
+## Mini-mode
+
+Mini-mode is a compact controller-screen layout intended for a
+Raspberry Pi + 5" touch screen, paired with a simple MIDI controller.
+The screen shows the performance info a DJ glances at — scrolling beat
+grids, deck titles and key, elapsed/remaining time, phrase counter,
+full-track overview, and a per-deck peak meter — while the paired
+hardware owns transport, EQ, loops, and FX.
+
+```sh
+# Dev-machine preview (800x480 simulated window)
+make run-mini
+
+# Or directly
+./build/boom --mini --force-size=800x480
+```
+
+### Flags
+
+| Flag | Effect |
+|---|---|
+| `--mini` | Enable the controller-screen layout. Same as `--layout=mini`. |
+| `--fullscreen` | Start fullscreen. Required for a Pi kiosk. |
+| `--kiosk` | Hide the settings gear and any controls that could exit the app. |
+| `--force-size=WxH` | Override the window size (e.g. `800x480`, `1024x600`). |
+| `--layout=desktop\|mini` | Explicit layout selection. |
+
+Flags can also be persisted in `configs/boom.yaml` under `ui:`:
+
+```yaml
+ui:
+  layout: mini
+  fullscreen: true
+  kiosk: true
+  window_width: 800
+  window_height: 480
+```
+
+### Keyboard shortcuts (no controller required)
+
+Useful when developing or testing mini-mode without MIDI hardware:
+
+| Key | Action |
+|---|---|
+| `Enter` | Open the library overlay / cycle focus between folders & tracks |
+| `↑` / `↓` | Scroll the focused pane |
+| `1` / `2` | Load the selected track into deck 1 / 2 (closes overlay) |
+| `Escape` | Close the overlay |
+| Tap play dot | Toggle play/pause for that deck |
+| Tap time row | Swap elapsed ↔ remaining as the prominent reading |
+
+### Raspberry Pi kiosk
+
+1. Build the arm64 binary on your dev machine:
+
+   ```sh
+   make build-linux-arm64
+   scp build/boom-linux-arm64 pi@raspberrypi.local:/tmp/boom
+   ```
+
+2. Install on the Pi:
+
+   ```sh
+   ssh pi@raspberrypi.local
+   sudo install -m 755 /tmp/boom /usr/local/bin/boom
+   sudo apt install unclutter            # hides the mouse cursor
+   mkdir -p ~/.config/systemd/user
+   ```
+
+3. Copy the systemd units from `configs/systemd/` to
+   `~/.config/systemd/user/` and enable them:
+
+   ```sh
+   systemctl --user daemon-reload
+   systemctl --user enable --now unclutter
+   systemctl --user enable --now boom-kiosk
+   ```
+
+Maintenance is SSH-only — the kiosk has no on-screen settings. To
+update the binary, `scp` a new build and restart:
+
+```sh
+ssh pi@raspberrypi.local 'sudo install -m 755 /tmp/boom /usr/local/bin/boom && systemctl --user restart boom-kiosk'
+```
+
 ## MIDI controllers
 
 Mappings live in `configs/controllers/` as YAML files. The loader compiles every mapping it finds and watches the directory for changes — saving a YAML file reloads the active controller without restarting the app.
@@ -143,6 +228,7 @@ configs/                 Default config and controller mappings
 ```
 make build              Build for the current platform
 make run                Build and run
+make run-mini           Build and run in mini-mode at 800x480
 make test               Run go test ./...
 make lint               Run golangci-lint
 make midi-train         Build the MIDI mapping trainer

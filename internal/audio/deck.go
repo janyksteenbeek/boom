@@ -186,7 +186,7 @@ func NewDeck(id int, sampleRate int, bus *event.Bus, wfCache WaveformCache) *Dec
 	d.storeFloat(&d.jogPitchOffset, 0)
 	d.storeFloat(&d.jogScratchGainBits, defaultJogScratchSensitivity)
 	d.storeFloat(&d.jogPitchGainBits, defaultJogPitchSensitivity)
-	d.vinylMode.Store(true) // default: classic CDJ scratch behavior
+	d.vinylMode.Store(true) // default: classic scratch behavior
 	return d
 }
 

@@ -11,7 +11,7 @@ import (
 	boomtheme "github.com/janyksteenbeek/boom/internal/ui/theme"
 )
 
-// Mini is the 800x480 CDJ / XDJ-XZ-style layout for Raspberry Pi + 5"
+// Mini is the 800x480 controller-screen layout for Raspberry Pi + 5"
 // touch. A fixed-height scrolling beat-grid band sits on top; two deck
 // cards fill the remainder side by side. Each card stacks an accent
 // banner, a tappable play/stop indicator, title/artist + key + BPM, a
@@ -30,11 +30,13 @@ func (Mini) Name() string { return "mini" }
 // out inline; the library-overlay package lifts it into a modal popup
 // when the user presses the browse encoder.
 func (Mini) Build(d Deps) fyne.CanvasObject {
-	// Halve the pre-allocated waveform bar count for the Pi GPU. Safe
-	// to do here because the widgets have not been rendered yet —
-	// CreateRenderer reads MaxBars once at first show.
-	d.Deck1.WaveformWidget().SetMaxBars(200)
-	d.Deck2.WaveformWidget().SetMaxBars(200)
+	// Shrink the pre-allocated waveform bar count. Each bar is 3
+	// canvas.Line objects (one per frequency band) and Fyne's
+	// compositor iterates every visible line per frame — at 128 bars
+	// we pay 768 lines across both decks vs 2400 at the desktop
+	// default. The detail loss is invisible on an 800-px-wide card.
+	d.Deck1.WaveformWidget().SetMaxBars(128)
+	d.Deck2.WaveformWidget().SetMaxBars(128)
 
 	// Beat-grid band: fixed height so the two scrolling strips each
 	// get ~70 px — enough to read beats without eating the deck
@@ -59,7 +61,7 @@ func (Mini) Build(d Deps) fyne.CanvasObject {
 	)
 }
 
-// deckCard composes the CDJ-style deck card for one deck.
+// deckCard composes the per-deck card for mini-mode.
 //
 // Vertical stack, top → bottom:
 //
@@ -76,7 +78,7 @@ func deckCard(d Deps, deckID int) fyne.CanvasObject {
 	accent := boomtheme.DeckColor(deckID)
 
 	// Thin colored accent strip at the very top — deck identity at a
-	// glance, matching the CDJ title banner.
+	// glance, distinguishing decks from across the room.
 	banner := canvas.NewRectangle(tintedAccent(accent))
 	banner.SetMinSize(fyne.NewSize(0, 4))
 

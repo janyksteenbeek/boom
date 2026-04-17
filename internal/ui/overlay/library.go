@@ -1,7 +1,7 @@
 // Package overlay holds modal/popup UI overlays that layer on top of the
 // main layout. The library overlay is triggered by the MIDI browse
-// encoder in mini-mode and renders a compact track-picker centered on the
-// screen — CDJ-style. The main layout is otherwise untouched.
+// encoder in mini-mode and renders a compact track-picker centered on
+// the screen. The main layout is otherwise untouched.
 package overlay
 
 import (
@@ -20,7 +20,7 @@ import (
 
 // Library wraps a compact BrowserView in a modal popup. Opening, scroll,
 // focus-toggle, and closing are driven entirely by bus events so the
-// behavior matches what a CDJ user expects:
+// behavior mirrors what a hardware browse encoder expects:
 //
 //   - browse encoder push      → open / cycle focus (sidebar ↔ track list)
 //   - browse encoder rotate    → scroll the focused pane

@@ -1,6 +1,7 @@
 // Package layout defines pluggable window layouts for the Boom UI. The
 // desktop layout is the traditional workstation composition; mini is a
-// compact CDJ-like composition for a Raspberry Pi + 5" touch screen.
+// compact controller-screen composition for a Raspberry Pi + 5" touch
+// screen.
 //
 // Layouts receive a Deps bundle containing pre-constructed, event-wired
 // widgets and return the root canvas object that Window.SetContent accepts.

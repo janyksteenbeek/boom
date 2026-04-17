@@ -122,7 +122,7 @@ func (e *Engine) handleDeckEvent(ev event.Event) error {
 // The FLX4 platter is a fine-grained encoder (CC34 emits one delta per
 // MIDI tick, well over a thousand ticks per revolution). At 5 ms/tick a
 // full revolution scrubs roughly 8–10 seconds, which matches the "search"
-// feel of a CDJ when the platter is spun while paused.
+// feel of a digital jog wheel when the platter is spun while paused.
 const pausedScrubSecondsPerUnit = 0.025
 
 // publishPosition broadcasts an explicit position update for a deck. Used
