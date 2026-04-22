@@ -229,6 +229,18 @@ func (r *waveformRenderer) drawBars(snap waveformSnapshot, size fyne.Size) {
 	if barWidth < 1.5 {
 		step = int(math.Ceil(float64(1.5 / barWidth)))
 	}
+	// Also respect the renderer's pre-allocated bar budget. Without
+	// this, a peakCount larger than maxBars would silently truncate
+	// the right side of the waveform (we'd iterate past the end of
+	// r.barsLow/Mid/High and the nil-index guards below would drop
+	// the bars). Forcing step up keeps the waveform spanning the
+	// full width at a coarser granularity.
+	if n := len(r.barsLow); n > 0 {
+		minStep := (peakCount + n - 1) / n
+		if minStep > step {
+			step = minStep
+		}
+	}
 
 	// Leave padding at top/bottom for breathing room
 	maxH := centerY - 8

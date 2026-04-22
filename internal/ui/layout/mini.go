@@ -38,10 +38,19 @@ func (Mini) Build(d Deps) fyne.CanvasObject {
 	d.Deck1.WaveformWidget().SetMaxBars(128)
 	d.Deck2.WaveformWidget().SetMaxBars(128)
 
-	// Beat-grid band: fixed height so the two scrolling strips each
-	// get ~70 px — enough to read beats without eating the deck
-	// cards' vertical budget.
-	topBand := container.New(&fixedHeight{h: 140}, d.BeatGrid)
+	// Beat-grid band: each scrolling strip gets its own deck-colored
+	// accent strip on the left so the two decks are clearly
+	// separable even when one hasn't loaded a track yet (otherwise
+	// the empty strip's near-black bg blends into the window and
+	// looks like the deck is missing).
+	gridRow := func(deckID int) fyne.CanvasObject {
+		accent := canvas.NewRectangle(boomtheme.DeckColor(deckID))
+		accent.SetMinSize(fyne.NewSize(4, 0))
+		return container.NewBorder(nil, nil, accent, nil, d.BeatGrid.Strip(deckID))
+	}
+	topBand := container.New(&fixedHeight{h: 140},
+		container.NewGridWithRows(2, gridRow(1), gridRow(2)),
+	)
 
 	hSep := canvas.NewRectangle(boomtheme.ColorSeparator)
 	hSep.SetMinSize(fyne.NewSize(0, 1))

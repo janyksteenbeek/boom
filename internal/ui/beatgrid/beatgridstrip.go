@@ -66,6 +66,11 @@ func NewBeatGridStrip(bus *event.Bus) *BeatGridStrip {
 	return b
 }
 
+// Strip returns the per-deck scrolling strip. Exposed so alternative
+// layouts (e.g. mini-mode) can place the strips individually with
+// their own chrome instead of using the default stacked composition.
+func (b *BeatGridStrip) Strip(deckID int) *DeckStrip { return b.strip(deckID) }
+
 // UpdatePosition updates the playback position for a deck.
 func (b *BeatGridStrip) UpdatePosition(deckID int, pos float64) {
 	b.strip(deckID).SetPosition(pos)
